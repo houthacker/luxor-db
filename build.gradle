@@ -1,0 +1,6 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'dev.luxor-db'
+version = '0.0.1-SNAPSHOT'
