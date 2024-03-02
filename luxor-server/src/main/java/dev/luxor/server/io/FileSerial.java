@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,7 +21,7 @@ import org.slf4j.LoggerFactory;
  *
  * @author houthacker
  */
-public final class FileSerial {
+public final class FileSerial implements ReadWriteLock {
 
   private static final Logger log = LoggerFactory.getLogger(FileSerial.class);
 
@@ -115,7 +116,7 @@ public final class FileSerial {
 
       // If the tail is not null, move it before serial.
       if (nonNull(tail)) {
-        final Lock lock = tail.uniqueLock();
+        final Lock lock = tail.writeLock();
         lock.lock();
         try {
           tail.next = serial;
@@ -156,7 +157,7 @@ public final class FileSerial {
             Locks.exclusiveUnlock(this.previous.guard, this.next.guard);
           }
         } else if (nonNull(this.previous)) {
-          final Lock lock = this.previous.uniqueLock();
+          final Lock lock = this.previous.writeLock();
           lock.lock();
           try {
             this.previous.next = this.next;
@@ -164,7 +165,7 @@ public final class FileSerial {
             lock.unlock();
           }
         } else if (nonNull(this.next)) {
-          final Lock lock = this.next.uniqueLock();
+          final Lock lock = this.next.writeLock();
           lock.lock();
           try {
             this.next.previous = this.previous;
@@ -189,7 +190,8 @@ public final class FileSerial {
    *
    * @return The shared lock.
    */
-  public Lock sharedLock() {
+  @Override
+  public Lock readLock() {
     return this.guard.readLock();
   }
 
@@ -198,7 +200,8 @@ public final class FileSerial {
    *
    * @return The unique lock.
    */
-  public Lock uniqueLock() {
+  @Override
+  public Lock writeLock() {
     return this.guard.writeLock();
   }
 

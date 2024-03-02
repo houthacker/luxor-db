@@ -24,7 +24,7 @@
     <!-- Relax the line count and length of comments -->
     <rule ref="category/java/documentation.xml/CommentSize">
         <properties>
-            <property name="maxLines" value="20" />
+            <property name="maxLines" value="50" />
             <property name="maxLineLength" value="120" />
         </properties>
     </rule>

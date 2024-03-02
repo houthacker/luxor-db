@@ -14,24 +14,16 @@ import java.nio.ByteBuffer;
 @SuppressWarnings("checkstyle:AbbreviationAsWordInName")
 public final class FNV1a {
 
-  /**
-   * The initial hash value.
-   */
+  /** The initial hash value. */
   private static final long OFFSET_BASIS = 0xcbf29ce484222325L;
 
-  /**
-   * The value to multiply with when hashing a given message.
-   */
+  /** The value to multiply with when hashing a given message. */
   private static final long FNV_PRIME = 0x100000001b3L;
 
-  /**
-   * The current hash.
-   */
+  /** The current hash. */
   private long state;
 
-  /**
-   * Creates a new {@link FNV1a} instance that is initialized with the offset basis.
-   */
+  /** Creates a new {@link FNV1a} instance that is initialized with the offset basis. */
   public FNV1a() {
     this.state = OFFSET_BASIS;
   }
