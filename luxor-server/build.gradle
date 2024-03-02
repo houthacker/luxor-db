@@ -1,9 +1,46 @@
 plugins {
-    id 'java'
+    id 'java-library'
+    id 'pmd'
+    id 'checkstyle'
+    id 'com.github.spotbugs' version "6.0.8"
+    id 'com.diffplug.spotless' version '6.25.0'
 }
 
 group = 'dev.luxor-db'
 version = "${project.version}"
+
+pmd {
+    consoleOutput = true
+    toolVersion = "7.0.0-rc4"
+    threads = 1
+    ruleSetFiles = rootProject.files("config/pmd/pmd.xml")
+    ruleSets = []
+    incrementalAnalysis = true
+    pmdTest.enabled = false
+}
+
+checkstyle {
+    toolVersion "10.13.0"
+    checkstyleTest.enabled = false
+}
+
+spotbugs {
+    spotbugsTest.enabled = false
+}
+
+spotless {
+    java {
+        googleJavaFormat()
+    }
+}
+
+// Workaround for conflicting dependencies
+// See https://github.com/checkstyle/checkstyle/issues/14211
+configurations.checkstyle {
+    resolutionStrategy.capabilitiesResolution.withCapability("com.google.collections:google-collections") {
+        select("com.google.guava:guava:0")
+    }
+}
 
 repositories {
     mavenCentral()

@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<ruleset name="Custom ruleset"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0
+         http://pmd.sourceforge.net/ruleset_2_0_0.xsd">
+    <description>
+        Luxor PMD Configuration
+    </description>
+
+    <rule ref="category/java/bestpractices.xml" />
+    <rule ref="category/java/codestyle.xml" />
+    <rule ref="category/java/design.xml">
+        <exclude name="LoosePackageCoupling" />
+    </rule>
+    <rule ref="category/java/documentation.xml" />
+    <rule ref="category/java/multithreading.xml" />
+    <rule ref="category/java/performance.xml" />
+    <rule ref="category/java/security.xml"/>
+    <rule ref="category/java/errorprone.xml">
+        <exclude name="AvoidFieldNameMatchingMethodName" />
+    </rule>
+
+    <!-- Relax the line count and length of comments -->
+    <rule ref="category/java/documentation.xml/CommentSize">
+        <properties>
+            <property name="maxLines" value="20" />
+            <property name="maxLineLength" value="120" />
+        </properties>
+    </rule>
+
+    <rule ref="category/java/documentation.xml/CommentRequired">
+        <properties>
+            <property name="violationSuppressXPath" value="//FieldDeclaration//VariableDeclaratorId[@Name='log']" />
+        </properties>
+    </rule>
+
+    <rule ref="category/java/codestyle.xml/FieldNamingConventions">
+        <properties>
+            <property name="exclusions" value="serialVersionUID,serialPersistentFields,log" />
+        </properties>
+    </rule>
+
+    <rule ref="category/java/codestyle.xml/LongVariable">
+        <properties>
+            <property name="minimum" value="20" />
+        </properties>
+    </rule>
+
+</ruleset>
