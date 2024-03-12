@@ -7,7 +7,23 @@ plugins {
 }
 
 group = 'dev.luxor-db'
-version = "${project.version}"
+version = project.version
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+tasks.withType(JavaCompile).configureEach {
+    // luxor uses MemorySegments which are a preview feature in java 21.
+    options.compilerArgs += ['--enable-preview', '-Xlint:preview']
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+    maxHeapSize "1024m"
+    jvmArgs('--enable-preview', '--enable-native-access=ALL-UNNAMED', '-ea')
+}
 
 pmd {
     consoleOutput = true
