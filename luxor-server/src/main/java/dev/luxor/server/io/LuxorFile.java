@@ -1,6 +1,8 @@
 package dev.luxor.server.io;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousCloseException;
 import java.nio.channels.ClosedByInterruptException;
@@ -49,6 +51,9 @@ public final class LuxorFile implements ReadWriteLock, AutoCloseable {
 
   private static final Logger log = LoggerFactory.getLogger(LuxorFile.class);
 
+  /** The arena that manages the life cycle of mapped {@link MemorySegment}s. */
+  private final Arena arena;
+
   /** The real, absolute path to the file. */
   private final Path path;
 
@@ -62,14 +67,13 @@ public final class LuxorFile implements ReadWriteLock, AutoCloseable {
   private FileChannel channel;
 
   private LuxorFile(
-      final Path path,
-      final OpenOption[] options,
-      final FileChannel channel,
-      final FileSerial serial) {
+      final Arena arena, final Path path, final OpenOption[] options, final FileChannel channel)
+      throws IOException {
+    this.arena = arena;
     this.path = path;
     this.options = options;
     this.channel = channel;
-    this.serial = serial;
+    this.serial = FileSerial.find(path);
   }
 
   /**
@@ -81,10 +85,11 @@ public final class LuxorFile implements ReadWriteLock, AutoCloseable {
    * @throws IOException If the given path cannot be resolved to a real path, the file cannot be
    *     opened using the given options or finally, if the unique file serial cannot be obtained.
    */
+  @SuppressWarnings("java:S2095") // FileChannel is closed when file is closed.
   public static LuxorFile open(final Path path, final OpenOption... options) throws IOException {
-    final Path realPath = path.toRealPath();
+    final Path absolutePath = path.toAbsolutePath();
     return new LuxorFile(
-        realPath, options, FileChannel.open(realPath, options), FileSerial.find(realPath));
+        Arena.ofShared(), absolutePath, options, FileChannel.open(absolutePath, options));
   }
 
   /**
@@ -119,6 +124,30 @@ public final class LuxorFile implements ReadWriteLock, AutoCloseable {
   @Override
   public void close() throws IOException {
     this.channel.close();
+  }
+
+  /**
+   * Maps the given region of this file into memory which is accessible by other threads and
+   * processes.
+   *
+   * @param offset The offset in bytes at which to start the mapping.
+   * @param size The size in bytes of the requested region.
+   * @return The mapped file region.
+   * @throws IllegalArgumentException If {@code offset < 0}, {@code size < 0} or {@code offset +
+   *     size} overflows the maximum value of a long.
+   * @throws IllegalStateException If the {@link Arena} used to allocate the memory is not alive.
+   * @throws IOException If an I/O error occurs.
+   */
+  public MemorySegment mapShared(final long offset, final long size) throws IOException {
+    if (offset < 0) {
+      throw new IllegalArgumentException("offset must be >= 0");
+    } else if (size <= 0) {
+      throw new IllegalArgumentException("size must be > 0");
+    } else if (offset + size < 0) {
+      throw new IllegalArgumentException("offset + size overflows Long.MAX_VALUE");
+    }
+
+    return this.channel.map(FileChannel.MapMode.READ_WRITE, offset, size, this.arena);
   }
 
   /**
