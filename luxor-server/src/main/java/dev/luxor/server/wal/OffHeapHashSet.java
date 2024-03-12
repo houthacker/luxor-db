@@ -10,8 +10,6 @@ import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -83,8 +81,7 @@ public class OffHeapHashSet implements WALIndexTable {
   /** The storage of the {@code hash_set}. */
   private final MemorySegment memory;
 
-  /** The entries stored in this hash set. */
-  private Entry[] entries;
+  private ByteBuffer entries;
 
   /**
    * The maximum amount of entries that can be stored in this hash set without allocating more
@@ -112,66 +109,51 @@ public class OffHeapHashSet implements WALIndexTable {
   }
 
   /**
-   * Bulk-copies {@code entries} to an on-heap memory segment.
+   * Fills {@code buf} with empty entries, returning the same buffer after rewinding it.
    *
-   * @param entries The entries to copy.
-   * @return The memory segment containing the entries.
-   * @throws ArithmeticException If the resulting {@link MemorySegment} would be larger than {@link
-   *     Integer#MAX_VALUE}.
+   * @param buf The buffer to fill.
+   * @return The filled buffer.
    */
-  private static MemorySegment toHeapSegment(final Entry[] entries) {
-    final int sz = (int) (entries.length * ENTRY_LAYOUT.byteSize());
-    if (sz < 0 /* i.e. overflow */) {
-      throw new ArithmeticException("Length of MemorySegment overflows Integer.MAX_VALUE");
+  private static ByteBuffer fillWithEmptyEntries(final ByteBuffer buf) {
+    buf.rewind();
+
+    while (buf.hasRemaining()) {
+      buf.putLong(0xffffffff00000000L); // int(-1) and padding
+      buf.putLong(-1);
     }
 
-    final ByteBuffer buf = ByteBuffer.allocate(sz);
-
-    final byte[] padding = new byte[] {0, 0, 0, 0};
-    Arrays.stream(entries)
-        .forEach(
-            entry -> {
-              if (nonNull(entry)) {
-                buf.putInt(entry.key).put(padding).putLong(entry.value);
-              } else {
-                buf.putInt(-1).put(padding).putLong(-1L);
-              }
-            });
-
-    return MemorySegment.ofBuffer(buf.rewind());
+    return buf.rewind();
   }
 
   /**
-   * Bulk-copies {@code segment} to an array of {@code Entry}. This method assumes that {@code
-   * segment.byteSize() % ENTRY_LAYOUT.byteSize() == 0}.
+   * Returns the entry at the given {@code index}.
    *
-   * @param segment The segment to copy into entries.
-   * @return The newly created entry array.
-   * @throws ArithmeticException If the segment is larger than {@link Integer#MAX_VALUE} bytes.
+   * @param index The index at which the entry resides.
+   * @return The entry, or {@code null} if no entry resides at the given index.
    */
-  private static Entry[] loadFromNativeMemory(final MemorySegment segment) {
-    try {
-      final ByteBuffer buf = segment.asByteBuffer();
+  private Entry getEntryAt(final int index) {
+    this.entries.position((int) (index * ENTRY_LAYOUT.byteSize()));
 
-      int index = 0;
-      final Entry[] entries = new Entry[(int) (buf.limit() / ENTRY_LAYOUT.byteSize())];
-      while (buf.remaining() > 0) {
-        final int key = buf.getInt();
-        buf.getInt(); // struct padding
-        final long value = buf.getLong();
+    final int key = (int) (this.entries.getLong() >>> 32);
+    final long value = this.entries.getLong();
 
-        if (key != -1) {
-          // This way of reading the entry array would be bad if someone messed up the data on disk.
-          entries[index] = new Entry(key, value);
-        }
-
-        index++;
-      }
-
-      return entries;
-    } catch (UnsupportedOperationException e) {
-      throw new ArithmeticException("Length of MemorySegment overflows Integer.MAX_VALUE");
+    if (key == -1) {
+      return null;
     }
+
+    return new Entry(key, value);
+  }
+
+  /**
+   * Sets the entry at the given {@code index}.
+   *
+   * @param index The index at which to set the entry.
+   * @param entry The entry to set.
+   */
+  private void setEntryAt(final int index, final Entry entry) {
+    this.entries.position((int) (index * ENTRY_LAYOUT.byteSize()));
+
+    this.entries.putLong((long) entry.key << 32).putLong(entry.value);
   }
 
   /**
@@ -180,7 +162,7 @@ public class OffHeapHashSet implements WALIndexTable {
    * @return The current load factor.
    */
   private double loadFactor() {
-    return this.size / (this.capacity * 1.0d);
+    return this.size / (this.entries.rewind().limit() / (ENTRY_LAYOUT.byteSize() * 1.0d));
   }
 
   /**
@@ -195,14 +177,20 @@ public class OffHeapHashSet implements WALIndexTable {
       throw new ArithmeticException("Integer overflow.");
     }
 
-    final Entry[] oldEntries = this.entries;
+    final ByteBuffer oldBuffer = this.entries;
+    this.entries =
+        fillWithEmptyEntries(ByteBuffer.allocate((int) (newCapacity * ENTRY_LAYOUT.byteSize())));
 
-    this.entries = new Entry[newCapacity];
     this.size = 0;
     this.capacity = newCapacity;
-    Arrays.stream(oldEntries)
-        .filter(Objects::nonNull)
-        .forEach(entry -> this.put(entry.key, entry.value));
+    while (oldBuffer.hasRemaining()) {
+      final int key = (int) (oldBuffer.getLong() >>> 32);
+      final long value = oldBuffer.getLong();
+
+      if (key != -1) {
+        this.put(key, value);
+      }
+    }
   }
 
   /**
@@ -219,7 +207,7 @@ public class OffHeapHashSet implements WALIndexTable {
 
     int bucket = hash % this.capacity;
     Entry entry;
-    while (nonNull(entry = this.entries[bucket])) {
+    while (nonNull(entry = this.getEntryAt(bucket))) {
       if (entry.key == key) {
         return bucket;
       }
@@ -258,11 +246,14 @@ public class OffHeapHashSet implements WALIndexTable {
               ValueLayout.ADDRESS,
               LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_ENTRIES_NAME)));
       final MemorySegment ptr = ms.reinterpret(this.capacity * ENTRY_LAYOUT.byteSize());
+      this.entries =
+          MemorySegment.ofArray(new byte[(int) ptr.byteSize()]).copyFrom(ptr).asByteBuffer();
 
-      // Bulk copy from off-heap into heap memory.
-      this.entries = loadFromNativeMemory(ptr);
     } else {
-      this.entries = new Entry[this.capacity];
+
+      this.entries =
+          fillWithEmptyEntries(
+              ByteBuffer.allocate((int) (this.capacity * ENTRY_LAYOUT.byteSize())));
     }
   }
 
@@ -297,7 +288,7 @@ public class OffHeapHashSet implements WALIndexTable {
     }
 
     // Bulk copy of entries to off-heap memory segment.
-    offHeap.copyFrom(toHeapSegment(this.entries));
+    offHeap.copyFrom(MemorySegment.ofBuffer(this.entries.rewind()));
 
     // Then set the capacity and size.
     this.memory.set(
@@ -326,9 +317,9 @@ public class OffHeapHashSet implements WALIndexTable {
     // This might feel inefficient, but greedy allocation is more expensive than walking some
     // entries twice.
     int bucket = this.bucketOf(key, value);
-    if (nonNull(this.entries[bucket])) {
+    if (nonNull(this.getEntryAt(bucket))) {
       // If the entry is non-null, it contains the same key and must be overwritten.
-      this.entries[bucket] = new Entry(key, value);
+      this.setEntryAt(bucket, new Entry(key, value));
     } else {
 
       // Now we know that we must insert a new Entry. Check the fill factor to see if we must grow
@@ -337,7 +328,7 @@ public class OffHeapHashSet implements WALIndexTable {
         this.grow();
       }
 
-      this.entries[this.bucketOf(key, value)] = new Entry(key, value);
+      this.setEntryAt(this.bucketOf(key, value), new Entry(key, value));
       this.size++;
     }
   }
@@ -353,7 +344,7 @@ public class OffHeapHashSet implements WALIndexTable {
 
     int bucket = hash % this.capacity;
     Entry entry;
-    while (nonNull(entry = this.entries[bucket])) {
+    while (nonNull(entry = this.getEntryAt(bucket))) {
       if (entry.value == value) {
         return entry.key;
       }
