@@ -208,8 +208,9 @@ public class OffHeapWALIndex implements WALIndex {
    *
    * @throws ConcurrentModificationException If a concurrent modification to the index headers is
    *     detected
+   * @throws IOException If loading the table data fails.
    */
-  public void reload() {
+  public void reload() throws IOException {
     final OffHeapWALIndexHeader[] newHeaders = loadHeaders(this.memory);
 
     if (newHeaders[0].equals(newHeaders[2])) {

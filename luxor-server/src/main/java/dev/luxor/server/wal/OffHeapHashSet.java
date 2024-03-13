@@ -1,15 +1,16 @@
 package dev.luxor.server.wal;
 
-import static dev.luxor.server.shared.Ensure.ensureAtLeastZero;
 import static java.util.Objects.nonNull;
 import static java.util.Objects.requireNonNull;
 
 import dev.luxor.server.io.LuxorFile;
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.nio.ByteBuffer;
+import java.util.Iterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,16 +45,27 @@ public class OffHeapHashSet implements WALIndexTable {
           MemoryLayout.paddingLayout(ValueLayout.JAVA_INT.byteSize()),
           ValueLayout.JAVA_LONG.withName(ENTRY_VALUE_NAME));
 
+  private static final long ENTRY_KEY_OFFSET =
+      ENTRY_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(ENTRY_KEY_NAME));
+
+  private static final long ENTRY_VALUE_OFFSET =
+      ENTRY_LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(ENTRY_VALUE_NAME));
+
   private static final String HASH_SET_CAPACITY_NAME = "capacity";
   private static final String HASH_SET_SIZE_NAME = "size";
-  private static final String HASH_SET_ENTRIES_NAME = "entries";
+  private static final String HASH_SET_DATA_NAME = "data";
 
   public static final MemoryLayout LAYOUT =
       MemoryLayout.structLayout(
               ValueLayout.JAVA_INT.withName(HASH_SET_CAPACITY_NAME),
               ValueLayout.JAVA_INT.withName(HASH_SET_SIZE_NAME),
-              ValueLayout.ADDRESS.withTargetLayout(ENTRY_LAYOUT).withName(HASH_SET_ENTRIES_NAME))
+              ValueLayout.ADDRESS.withTargetLayout(ENTRY_LAYOUT).withName(HASH_SET_DATA_NAME))
           .withName("hash_set");
+
+  private static final long HASH_SET_SIZE_OFFSET =
+      LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_SIZE_NAME));
+  private static final long HASH_SET_CAPACITY_OFFSET =
+      LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_CAPACITY_NAME));
 
   /**
    * When an {@link OffHeapHashSet} becomes fairly large (roughly 10Mb), this fact is logged to the
@@ -75,22 +87,11 @@ public class OffHeapHashSet implements WALIndexTable {
   /** The backing file. */
   private final LuxorFile file;
 
-  /** The file offset in bytes of the entries address in off-heap memory. */
-  private final long offset;
+  /** The storage of this set's metadata. */
+  private final MemorySegment header;
 
-  /** The storage of the {@code hash_set}. */
-  private final MemorySegment memory;
-
-  private ByteBuffer entries;
-
-  /**
-   * The maximum amount of entries that can be stored in this hash set without allocating more
-   * memory.
-   */
-  private int capacity;
-
-  /** The amount of entries residing in this hash set. */
-  private int size;
+  /** The storage of this set's data. */
+  private MemorySegment data;
 
   /**
    * Creates a new {@link OffHeapHashSet} using the provided {@code file} to allocate new space when
@@ -102,40 +103,39 @@ public class OffHeapHashSet implements WALIndexTable {
    */
   public OffHeapHashSet(final LuxorFile file, final long offset) throws IOException {
     this.file = requireNonNull(file, "file");
-    this.offset = ensureAtLeastZero(offset);
-    this.memory = this.file.mapShared(offset, LAYOUT.byteSize());
+    this.header = this.file.mapShared(offset, LAYOUT.byteSize());
 
     this.load();
   }
 
   /**
-   * Fills {@code buf} with empty entries, returning the same buffer after rewinding it.
+   * Fills {@code memory} with empty entries, returning the same segment afterward.
    *
-   * @param buf The buffer to fill.
-   * @return The filled buffer.
+   * @param memory The memory to fill.
+   * @return The filled memory segment.
    */
-  private static ByteBuffer fillWithEmptyEntries(final ByteBuffer buf) {
-    buf.rewind();
+  private static MemorySegment fillWithEmptyEntries(final MemorySegment memory) {
 
-    while (buf.hasRemaining()) {
-      buf.putLong(0xffffffff00000000L); // int(-1) and padding
-      buf.putLong(-1);
+    for (long l = 0; l < memory.byteSize(); l += ENTRY_LAYOUT.byteSize()) {
+      memory.set(ValueLayout.JAVA_LONG, l, 0xffffffff00000000L); // int(-1) and zeroed padding
+      memory.set(ValueLayout.JAVA_LONG, l, -1L);
     }
 
-    return buf.rewind();
+    return memory;
   }
 
   /**
    * Returns the entry at the given {@code index}.
    *
+   * @param memory The memory segment to read the entry from.
    * @param index The index at which the entry resides.
    * @return The entry, or {@code null} if no entry resides at the given index.
    */
-  private Entry getEntryAt(final int index) {
-    this.entries.position((int) (index * ENTRY_LAYOUT.byteSize()));
+  private Entry getEntryAt(final MemorySegment memory, final int index) {
+    final long entryOffset = Math.multiplyExact(index, ENTRY_LAYOUT.byteSize());
 
-    final int key = (int) (this.entries.getLong() >>> 32);
-    final long value = this.entries.getLong();
+    final int key = memory.get(ValueLayout.JAVA_INT, entryOffset);
+    final long value = memory.get(ValueLayout.JAVA_LONG, entryOffset + ENTRY_VALUE_OFFSET);
 
     if (key == -1) {
       return null;
@@ -147,13 +147,15 @@ public class OffHeapHashSet implements WALIndexTable {
   /**
    * Sets the entry at the given {@code index}.
    *
+   * @param memory The memory segment to store the entry in.
    * @param index The index at which to set the entry.
    * @param entry The entry to set.
    */
-  private void setEntryAt(final int index, final Entry entry) {
-    this.entries.position((int) (index * ENTRY_LAYOUT.byteSize()));
+  private void setEntryAt(final MemorySegment memory, final int index, final Entry entry) {
+    final long entryOffset = Math.multiplyExact(index, ENTRY_LAYOUT.byteSize());
 
-    this.entries.putLong((long) entry.key << 32).putLong(entry.value);
+    memory.set(ValueLayout.JAVA_INT, entryOffset, entry.key);
+    memory.set(ValueLayout.JAVA_LONG, entryOffset + ENTRY_VALUE_OFFSET, entry.value);
   }
 
   /**
@@ -162,7 +164,7 @@ public class OffHeapHashSet implements WALIndexTable {
    * @return The current load factor.
    */
   private double loadFactor() {
-    return this.size / (this.entries.rewind().limit() / (ENTRY_LAYOUT.byteSize() * 1.0d));
+    return this.size() / (this.capacity() * 1.0d);
   }
 
   /**
@@ -170,26 +172,60 @@ public class OffHeapHashSet implements WALIndexTable {
    * are re-hashed.
    *
    * @throws ArithmeticException if growing the capacity would cause an integer overflow.
+   * @throws IOException If either mapping a larger region fails or a recursive {@code grow()} is
+   *     detected.
    */
-  private void grow() {
-    final int newCapacity = this.capacity << 1;
+  private MemorySegment grow() throws IOException {
+    final int oldSize = this.size();
+    final int oldCapacity = this.capacity();
+    final int newCapacity = oldCapacity << 1;
     if (newCapacity < 0) {
       throw new ArithmeticException("Integer overflow.");
     }
 
-    final ByteBuffer oldBuffer = this.entries;
-    this.entries =
-        fillWithEmptyEntries(ByteBuffer.allocate((int) (newCapacity * ENTRY_LAYOUT.byteSize())));
+    // Copy the old entries memory to a temporary new location. Ensure it is automatically cleaned
+    // up after use.
+    try (final Arena arena = Arena.ofConfined()) {
+      final MemorySegment temp =
+          arena.allocate(ENTRY_LAYOUT.byteSize() * oldCapacity).copyFrom(this.data);
 
-    this.size = 0;
-    this.capacity = newCapacity;
-    while (oldBuffer.hasRemaining()) {
-      final int key = (int) (oldBuffer.getLong() >>> 32);
-      final long value = oldBuffer.getLong();
+      MemorySegment extended =
+          fillWithEmptyEntries(
+              this.file.mapShared(LAYOUT.byteSize(), ENTRY_LAYOUT.byteSize() * newCapacity));
 
-      if (key != -1) {
-        this.put(key, value);
+      this.setSize(0);
+      this.setCapacity(newCapacity);
+
+      // Now that we have the new memory segment allocated, fill it with the entries from the old
+      // segment.
+      for (Iterator<MemorySegment> it = temp.elements(ENTRY_LAYOUT).iterator(); it.hasNext(); ) {
+        final MemorySegment slice = it.next();
+        final int key = slice.get(ValueLayout.JAVA_INT, ENTRY_KEY_OFFSET);
+        final long value = slice.get(ValueLayout.JAVA_LONG, ENTRY_VALUE_OFFSET);
+
+        if (key != -1) {
+          try {
+            this.putInternal(extended, key, value);
+          } catch (IOException e) {
+            this.setSize(oldSize);
+            this.setCapacity(oldCapacity);
+
+            // this.data and ptr to it do not have to be set since they have not been updated yet.
+            // We will have to bail out now though, so rethrowing the original exception.
+            throw new IOException(
+                "It appears as if we're recursively growing an OffHeapHashSet. Reverting to pre-grow state.",
+                e);
+          }
+        }
       }
+
+      // Getting here means we were successful in copying all entries from old to new memory.
+      this.header.set(
+          ValueLayout.ADDRESS,
+          LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)),
+          extended);
+      this.data = extended;
+      return this.data;
     }
   }
 
@@ -198,107 +234,67 @@ public class OffHeapHashSet implements WALIndexTable {
    * this method walks all entries until it found an empty slot, this is guaranteed to terminate if
    * {@link OffHeapHashSet#MAX_LOAD_FACTOR} is {@code < 1.0}.
    *
+   * @param memory The memory segment to search.
    * @param key The entry key.
    * @param value The entry value.
    * @return The bucket to store the entry in.
    */
-  private int bucketOf(final int key, final long value) {
+  private int bucketOf(final MemorySegment memory, final int key, final long value) {
     int hash = Long.hashCode(value);
 
-    int bucket = hash % this.capacity;
+    final int capacity = this.capacity();
+    int bucket = hash % capacity;
     Entry entry;
-    while (nonNull(entry = this.getEntryAt(bucket))) {
+    while (nonNull(entry = this.getEntryAt(memory, bucket))) {
       if (entry.key == key) {
         return bucket;
       }
 
       bucket++;
-      bucket %= this.capacity;
+      bucket %= capacity;
     }
 
     return bucket;
   }
 
-  /** Copies the memory-mapped entries from off-heap memory into this {@link OffHeapHashSet}. */
-  public final void load() {
-    // Read capacity from memory, allocate first block heap-memory if cap == 0.
-    final int cap =
-        this.memory.get(
-            ValueLayout.JAVA_INT,
-            LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_CAPACITY_NAME)));
-    this.capacity = cap == 0 ? INITIAL_CAPACITY : cap;
+  /**
+   * Copies the memory-mapped entries from off-heap memory into this {@link OffHeapHashSet}.
+   *
+   * @throws IOException If the data pointer must be allocated but doing so fails.
+   */
+  public final void load() throws IOException {
+    // Read capacity from memory, allocate first block heap-memory if capacity == 0.
+    final int capacity = this.capacity();
 
-    this.size =
-        this.memory.get(
-            ValueLayout.JAVA_INT,
-            LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_SIZE_NAME)));
-
-    if (this.size >= SIZE_WARNING_THRESHOLD) {
+    final int size = this.size();
+    if (size >= SIZE_WARNING_THRESHOLD) {
       log.warn(
           "Risk of fast JVM heap saturation: loading {} entries (+/- {} bytes) into OffHeapHashSet.",
-          this.size,
-          this.size * ENTRY_LAYOUT.byteSize());
+          size,
+          size * ENTRY_LAYOUT.byteSize());
     }
 
-    if (cap > 0) {
+    if (capacity > 0) {
       final MemorySegment ms =
-          this.memory.get(
+          this.header.get(
               ValueLayout.ADDRESS,
-              LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_ENTRIES_NAME)));
-      final MemorySegment ptr = ms.reinterpret(this.capacity * ENTRY_LAYOUT.byteSize());
-      this.entries =
-          MemorySegment.ofArray(new byte[(int) ptr.byteSize()]).copyFrom(ptr).asByteBuffer();
-
+              LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)));
+      this.data = ms.reinterpret(capacity * ENTRY_LAYOUT.byteSize());
     } else {
 
-      this.entries =
+      // If the data is not set yet, allocate it and update the header to point to it.
+      MemorySegment d =
           fillWithEmptyEntries(
-              ByteBuffer.allocate((int) (this.capacity * ENTRY_LAYOUT.byteSize())));
-    }
-  }
-
-  /**
-   * Flushes the contents of this {@link OffHeapHashSet} into the off-heap memory-mapped backing
-   * storage.
-   *
-   * @throws ArithmeticException If the required memory allocation size overflows {@link
-   *     Integer#MAX_VALUE}.
-   */
-  public void flush() throws IOException {
-    final int cap =
-        this.memory.get(
-            ValueLayout.JAVA_INT,
-            LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_CAPACITY_NAME)));
-
-    MemorySegment offHeap;
-    if (cap < this.capacity) {
-      offHeap =
-          this.file.mapShared(
-              this.offset + LAYOUT.byteSize(), this.capacity * ENTRY_LAYOUT.byteSize());
-      this.memory.set(
+              this.file.mapShared(
+                  ENTRY_LAYOUT.byteSize(), INITIAL_CAPACITY * ENTRY_LAYOUT.byteSize()));
+      this.header.set(
           ValueLayout.ADDRESS,
-          LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_ENTRIES_NAME)),
-          offHeap);
-    } else {
-      final MemorySegment ms =
-          this.memory.get(
-              ValueLayout.ADDRESS,
-              LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_ENTRIES_NAME)));
-      offHeap = ms.reinterpret(this.capacity * ENTRY_LAYOUT.byteSize());
+          LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)),
+          d);
+      this.data = d;
+      this.setSize(0);
+      this.setCapacity(INITIAL_CAPACITY);
     }
-
-    // Bulk copy of entries to off-heap memory segment.
-    offHeap.copyFrom(MemorySegment.ofBuffer(this.entries.rewind()));
-
-    // Then set the capacity and size.
-    this.memory.set(
-        ValueLayout.JAVA_INT,
-        LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_CAPACITY_NAME)),
-        this.capacity);
-    this.memory.set(
-        ValueLayout.JAVA_INT,
-        LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_SIZE_NAME)),
-        this.size);
   }
 
   /**
@@ -310,26 +306,36 @@ public class OffHeapHashSet implements WALIndexTable {
    * @param value The entry value.
    * @throws ArithmeticException If inserting the key/value causes the on-heap memory size to
    *     overflow {@link Integer#MAX_VALUE}.
+   * @throws UncheckedIOException If growing the set is required but fails.
    */
   public void put(final int key, final long value) {
+    try {
+      this.putInternal(this.data, key, value);
+    } catch (IOException e) {
+      throw new UncheckedIOException("Cannot grow hash set.", e);
+    }
+  }
+
+  private void putInternal(MemorySegment memory, final int key, final long value)
+      throws IOException {
     // Calculating the bucket must be done twice if there is no current entry to be replaced and the
     // hash set must be grown.
     // This might feel inefficient, but greedy allocation is more expensive than walking some
     // entries twice.
-    int bucket = this.bucketOf(key, value);
-    if (nonNull(this.getEntryAt(bucket))) {
+    int bucket = this.bucketOf(memory, key, value);
+    if (nonNull(this.getEntryAt(memory, bucket))) {
       // If the entry is non-null, it contains the same key and must be overwritten.
-      this.setEntryAt(bucket, new Entry(key, value));
+      this.setEntryAt(memory, bucket, new Entry(key, value));
     } else {
 
       // Now we know that we must insert a new Entry. Check the fill factor to see if we must grow
       // (and rehash) first.
       if (this.loadFactor() >= MAX_LOAD_FACTOR) {
-        this.grow();
+        memory = this.grow();
       }
 
-      this.setEntryAt(this.bucketOf(key, value), new Entry(key, value));
-      this.size++;
+      this.setEntryAt(memory, this.bucketOf(memory, key, value), new Entry(key, value));
+      this.setSize(this.size() + 1);
     }
   }
 
@@ -340,17 +346,22 @@ public class OffHeapHashSet implements WALIndexTable {
    * @return The key, or {@code -1} if the value is not mapped in this hash set.
    */
   public int keyOf(final long value) {
+    return this.keyOfInternal(this.data, value);
+  }
+
+  private int keyOfInternal(final MemorySegment memory, final long value) {
     int hash = Long.hashCode(value);
 
-    int bucket = hash % this.capacity;
+    final int capacity = this.capacity();
+    int bucket = hash % capacity;
     Entry entry;
-    while (nonNull(entry = this.getEntryAt(bucket))) {
+    while (nonNull(entry = this.getEntryAt(memory, bucket))) {
       if (entry.value == value) {
         return entry.key;
       }
 
       bucket++;
-      bucket %= this.capacity;
+      bucket %= capacity;
     }
 
     return -1;
@@ -362,7 +373,19 @@ public class OffHeapHashSet implements WALIndexTable {
    * @return The amount of elements contained in this {@link OffHeapHashSet}.
    */
   public int size() {
-    return this.size;
+    return this.header.get(ValueLayout.JAVA_INT, HASH_SET_SIZE_OFFSET);
+  }
+
+  private void setSize(final int size) {
+    this.header.set(ValueLayout.JAVA_INT, HASH_SET_SIZE_OFFSET, size);
+  }
+
+  private int capacity() {
+    return this.header.get(ValueLayout.JAVA_INT, HASH_SET_CAPACITY_OFFSET);
+  }
+
+  private void setCapacity(final int capacity) {
+    this.header.set(ValueLayout.JAVA_INT, HASH_SET_CAPACITY_OFFSET, capacity);
   }
 
   /**

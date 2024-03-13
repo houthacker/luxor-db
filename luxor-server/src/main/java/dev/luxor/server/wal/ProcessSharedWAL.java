@@ -60,7 +60,11 @@ public class ProcessSharedWAL implements WriteAheadLog {
   @Override
   public void beginReadTransaction() throws LockFailedException {
     if (!this.index.isCurrent()) {
-      this.index.reload();
+      try {
+        this.index.reload();
+      } catch (IOException e) {
+        throw new LockFailedException("Could not acquire lock, reloading table data failed.", e);
+      }
     }
 
     this.index.lock(WALLockType.shared);
