@@ -25,9 +25,6 @@ class OffHeapHashSetTest {
         assertEquals(i, set.keyOf(1337L + i));
       }
 
-      // Force-flush the set to backing storage.
-      set.flush();
-
       // Create a new set using the same backing file and validate its contents.
       final OffHeapHashSet copy = new OffHeapHashSet(mmap, 0L);
       assertEquals(
