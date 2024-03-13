@@ -26,7 +26,6 @@ public final class Locks {
       return;
     }
 
-    // len == 10
     int first = 0;
     do {
       locks[first].writeLock().lock();
