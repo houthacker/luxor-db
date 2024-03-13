@@ -93,6 +93,9 @@ public class OffHeapHashSet implements WALIndexTable {
   /** The storage of this set's data. */
   private MemorySegment data;
 
+  /** Whether the table is currently being grown. This is used for recursive grow detection. */
+  private boolean growing;
+
   /**
    * Creates a new {@link OffHeapHashSet} using the provided {@code file} to allocate new space when
    * required.
@@ -145,6 +148,8 @@ public class OffHeapHashSet implements WALIndexTable {
         fillWithEmptyEntries(
             this.file.mapShared(
                 ENTRY_LAYOUT.byteSize(), INITIAL_CAPACITY * ENTRY_LAYOUT.byteSize()));
+    this.header.set(ValueLayout.JAVA_INT, HASH_SET_SIZE_OFFSET, 0);
+    this.header.set(ValueLayout.JAVA_INT, HASH_SET_CAPACITY_OFFSET, INITIAL_CAPACITY);
     this.header.set(
         ValueLayout.ADDRESS,
         LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)),
@@ -204,58 +209,74 @@ public class OffHeapHashSet implements WALIndexTable {
    *     detected.
    * @throws OutOfMemoryError If less JVM heap memory is available than is required to grow this
    *     table.
+   * @throws RecursiveGrowException If this method is detected to be called recursively.
    */
   private MemorySegment grow() throws IOException {
-    final int oldSize = this.size();
-    final int oldCapacity = this.capacity();
-    final int newCapacity = oldCapacity << 1;
-    if (newCapacity < 0) {
-      throw new ArithmeticException("Integer overflow.");
+    if (this.growing) {
+      throw new RecursiveGrowException(
+          "OffHeapHashSet.grow() is called recursively. Reverting to pre-grow state.");
     }
 
-    // Copy the old entries memory to a temporary off-heap location. Ensure it is automatically
-    // cleaned up after use.
-    try (final Arena arena = Arena.ofConfined()) {
-      final MemorySegment temp =
-          arena.allocate(ENTRY_LAYOUT.byteSize() * oldCapacity).copyFrom(this.data);
-
-      MemorySegment extended =
-          fillWithEmptyEntries(
-              this.file.mapShared(LAYOUT.byteSize(), ENTRY_LAYOUT.byteSize() * newCapacity));
-
-      this.setSize(0);
-      this.setCapacity(newCapacity);
-
-      // Now that we have the new memory segment allocated, fill it with the entries from the old
-      // segment.
-      for (Iterator<MemorySegment> it = temp.elements(ENTRY_LAYOUT).iterator(); it.hasNext(); ) {
-        final MemorySegment slice = it.next();
-        final int key = slice.get(ValueLayout.JAVA_INT, ENTRY_KEY_OFFSET);
-        final long value = slice.get(ValueLayout.JAVA_LONG, ENTRY_VALUE_OFFSET);
-
-        if (key != -1) {
-          try {
-            this.putInternal(extended, key, value);
-          } catch (IOException e) {
-            this.setSize(oldSize);
-            this.setCapacity(oldCapacity);
-
-            // this.data and ptr to it do not have to be set since they have not been updated yet.
-            // We will have to bail out now though, so rethrowing the original exception.
-            throw new IOException(
-                "It appears as if we're recursively growing an OffHeapHashSet. Reverting to pre-grow state.",
-                e);
-          }
-        }
+    this.growing = true;
+    try {
+      final int oldSize = this.size();
+      final int oldCapacity = this.capacity();
+      final int newCapacity = oldCapacity << 1;
+      if (newCapacity < 0) {
+        throw new ArithmeticException("Integer overflow.");
       }
 
-      // Getting here means we were successful in copying all entries from old to new memory.
-      this.header.set(
-          ValueLayout.ADDRESS,
-          LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)),
-          extended);
-      this.data = extended;
-      return this.data;
+      // Copy the old entries memory to a temporary off-heap location. Ensure it is automatically
+      // cleaned up after use.
+      try (final Arena arena = Arena.ofConfined()) {
+        final MemorySegment temp =
+            arena.allocate(ENTRY_LAYOUT.byteSize() * oldCapacity).copyFrom(this.data);
+
+        MemorySegment extended =
+            fillWithEmptyEntries(
+                this.file.mapShared(LAYOUT.byteSize(), ENTRY_LAYOUT.byteSize() * newCapacity));
+
+        this.setSize(0);
+        this.setCapacity(newCapacity);
+
+        // Now that we have the new memory segment allocated, fill it with the entries from the old
+        // segment.
+        for (Iterator<MemorySegment> it = temp.elements(ENTRY_LAYOUT).iterator(); it.hasNext(); ) {
+          final MemorySegment slice = it.next();
+          final int key = slice.get(ValueLayout.JAVA_INT, ENTRY_KEY_OFFSET);
+          final long value = slice.get(ValueLayout.JAVA_LONG, ENTRY_VALUE_OFFSET);
+
+          if (key != -1) {
+            try {
+              this.putInternal(extended, key, value);
+            } catch (IOException e) {
+              this.setSize(oldSize);
+              this.setCapacity(oldCapacity);
+
+              // this.data and ptr to it do not have to be set since they have not been updated yet.
+              // We will have to bail out now though, so rethrowing the original exception.
+              throw new IOException(
+                  "It appears that the OffHeapHashSet is grown recursively and that went undetected. Reverting to pre-grow state.",
+                  e);
+            } catch (RecursiveGrowException e) {
+              this.setSize(oldSize);
+              this.setCapacity(oldCapacity);
+
+              throw e;
+            }
+          }
+        }
+
+        // Getting here means we were successful in copying all entries from old to new memory.
+        this.header.set(
+            ValueLayout.ADDRESS,
+            LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)),
+            extended);
+        this.data = extended;
+        return this.data;
+      }
+    } finally {
+      this.growing = false;
     }
   }
 
