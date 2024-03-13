@@ -104,8 +104,7 @@ public class OffHeapHashSet implements WALIndexTable {
   public OffHeapHashSet(final LuxorFile file, final long offset) throws IOException {
     this.file = requireNonNull(file, "file");
     this.header = this.file.mapShared(offset, LAYOUT.byteSize());
-
-    this.load();
+    this.data = this.acquireData();
   }
 
   /**
@@ -122,6 +121,35 @@ public class OffHeapHashSet implements WALIndexTable {
     }
 
     return memory;
+  }
+
+  /**
+   * Reads or allocates and initializes the {@link MemorySegment} containing the table data.
+   *
+   * @return The memory containing the table data.
+   * @throws IOException If allocating the required memory fails.
+   */
+  private MemorySegment acquireData() throws IOException {
+    final int capacity = this.capacity();
+    if (capacity > 0) {
+      return this.header
+          .get(
+              ValueLayout.ADDRESS,
+              LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)))
+          .reinterpret(capacity * ENTRY_LAYOUT.byteSize());
+    }
+
+    // Getting here means the off-heap memory table contains no data yet. Allocate it and let the
+    // header point to it.
+    MemorySegment d =
+        fillWithEmptyEntries(
+            this.file.mapShared(
+                ENTRY_LAYOUT.byteSize(), INITIAL_CAPACITY * ENTRY_LAYOUT.byteSize()));
+    this.header.set(
+        ValueLayout.ADDRESS,
+        LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)),
+        d);
+    return d;
   }
 
   /**
@@ -168,12 +196,14 @@ public class OffHeapHashSet implements WALIndexTable {
   }
 
   /**
-   * Grows this {@link OffHeapHashSet} by doubling its size. After allocating the memory, the data
+   * Grows this {@link OffHeapHashSet} to double its size. After allocating the new memory, the data
    * are re-hashed.
    *
    * @throws ArithmeticException if growing the capacity would cause an integer overflow.
    * @throws IOException If either mapping a larger region fails or a recursive {@code grow()} is
    *     detected.
+   * @throws OutOfMemoryError If less JVM heap memory is available than is required to grow this
+   *     table.
    */
   private MemorySegment grow() throws IOException {
     final int oldSize = this.size();
@@ -183,8 +213,8 @@ public class OffHeapHashSet implements WALIndexTable {
       throw new ArithmeticException("Integer overflow.");
     }
 
-    // Copy the old entries memory to a temporary new location. Ensure it is automatically cleaned
-    // up after use.
+    // Copy the old entries memory to a temporary off-heap location. Ensure it is automatically
+    // cleaned up after use.
     try (final Arena arena = Arena.ofConfined()) {
       final MemorySegment temp =
           arena.allocate(ENTRY_LAYOUT.byteSize() * oldCapacity).copyFrom(this.data);
@@ -257,44 +287,14 @@ public class OffHeapHashSet implements WALIndexTable {
     return bucket;
   }
 
-  /**
-   * Copies the memory-mapped entries from off-heap memory into this {@link OffHeapHashSet}.
-   *
-   * @throws IOException If the data pointer must be allocated but doing so fails.
-   */
-  public final void load() throws IOException {
-    // Read capacity from memory, allocate first block heap-memory if capacity == 0.
-    final int capacity = this.capacity();
-
-    final int size = this.size();
-    if (size >= SIZE_WARNING_THRESHOLD) {
-      log.warn(
-          "Risk of fast JVM heap saturation: loading {} entries (+/- {} bytes) into OffHeapHashSet.",
-          size,
-          size * ENTRY_LAYOUT.byteSize());
-    }
-
-    if (capacity > 0) {
-      final MemorySegment ms =
-          this.header.get(
-              ValueLayout.ADDRESS,
-              LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)));
-      this.data = ms.reinterpret(capacity * ENTRY_LAYOUT.byteSize());
-    } else {
-
-      // If the data is not set yet, allocate it and update the header to point to it.
-      MemorySegment d =
-          fillWithEmptyEntries(
-              this.file.mapShared(
-                  ENTRY_LAYOUT.byteSize(), INITIAL_CAPACITY * ENTRY_LAYOUT.byteSize()));
-      this.header.set(
-          ValueLayout.ADDRESS,
-          LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)),
-          d);
-      this.data = d;
-      this.setSize(0);
-      this.setCapacity(INITIAL_CAPACITY);
-    }
+  /** Reloads the header segment of this {@link OffHeapHashSet} from off-heap memory. */
+  public final void reload() {
+    this.header.load();
+    final MemorySegment ms =
+        this.header.get(
+            ValueLayout.ADDRESS,
+            LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)));
+    this.data = ms.reinterpret(this.capacity() * ENTRY_LAYOUT.byteSize());
   }
 
   /**
@@ -316,6 +316,16 @@ public class OffHeapHashSet implements WALIndexTable {
     }
   }
 
+  /**
+   * Used to add client data as well as growing the table data, this method stores the entry of
+   * {@code key} and {@code value} into the appropriate bucket in {@code memory}. Any pre-existing
+   * entries with the same key are overwritten.
+   *
+   * @param memory The memory to store the entry in.
+   * @param key The entry key.
+   * @param value The entry value.
+   * @throws IOException If the table must be grown and that fails.
+   */
   private void putInternal(MemorySegment memory, final int key, final long value)
       throws IOException {
     // Calculating the bucket must be done twice if there is no current entry to be replaced and the
@@ -340,22 +350,46 @@ public class OffHeapHashSet implements WALIndexTable {
   }
 
   /**
-   * Retrieves the entry of {@code value} and returns its key.
+   * Stores {@code size} in the table header data.
+   *
+   * @param size The amount of entries in the table.
+   */
+  private void setSize(final int size) {
+    this.header.set(ValueLayout.JAVA_INT, HASH_SET_SIZE_OFFSET, size);
+  }
+
+  /**
+   * Returns the maximum amount of entries that can be stored in this table without growing it.
+   *
+   * @return The table capacity.
+   */
+  private int capacity() {
+    return this.header.get(ValueLayout.JAVA_INT, HASH_SET_CAPACITY_OFFSET);
+  }
+
+  /**
+   * Stores {@code capacity} in the table header data.
+   *
+   * @param capacity The maximum amount of entries that can be stored in this table without growing
+   *     it.
+   */
+  private void setCapacity(final int capacity) {
+    this.header.set(ValueLayout.JAVA_INT, HASH_SET_CAPACITY_OFFSET, capacity);
+  }
+
+  /**
+   * Searches the entry of {@code value} and returns its key.
    *
    * @param value The value to retrieve the key of.
    * @return The key, or {@code -1} if the value is not mapped in this hash set.
    */
   public int keyOf(final long value) {
-    return this.keyOfInternal(this.data, value);
-  }
-
-  private int keyOfInternal(final MemorySegment memory, final long value) {
     int hash = Long.hashCode(value);
 
     final int capacity = this.capacity();
     int bucket = hash % capacity;
     Entry entry;
-    while (nonNull(entry = this.getEntryAt(memory, bucket))) {
+    while (nonNull(entry = this.getEntryAt(this.data, bucket))) {
       if (entry.value == value) {
         return entry.key;
       }
@@ -368,24 +402,12 @@ public class OffHeapHashSet implements WALIndexTable {
   }
 
   /**
-   * Returns the amount of elements in this set.
+   * Returns the amount of entries contained in this set.
    *
-   * @return The amount of elements contained in this {@link OffHeapHashSet}.
+   * @return The amount of entries.
    */
   public int size() {
     return this.header.get(ValueLayout.JAVA_INT, HASH_SET_SIZE_OFFSET);
-  }
-
-  private void setSize(final int size) {
-    this.header.set(ValueLayout.JAVA_INT, HASH_SET_SIZE_OFFSET, size);
-  }
-
-  private int capacity() {
-    return this.header.get(ValueLayout.JAVA_INT, HASH_SET_CAPACITY_OFFSET);
-  }
-
-  private void setCapacity(final int capacity) {
-    this.header.set(ValueLayout.JAVA_INT, HASH_SET_CAPACITY_OFFSET, capacity);
   }
 
   /**

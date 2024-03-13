@@ -204,19 +204,18 @@ public class OffHeapWALIndex implements WALIndex {
   }
 
   /**
-   * Reloads the contents of this {@link OffHeapWALIndex}.
+   * Reloads the header of this {@link OffHeapWALIndex} from memory.
    *
    * @throws ConcurrentModificationException If a concurrent modification to the index headers is
    *     detected
-   * @throws IOException If loading the table data fails.
    */
-  public void reload() throws IOException {
+  public void reload() {
     final OffHeapWALIndexHeader[] newHeaders = loadHeaders(this.memory);
 
     if (newHeaders[0].equals(newHeaders[2])) {
       this.headers[0] = newHeaders[0];
       this.headers[1] = newHeaders[1];
-      this.table.load();
+      this.table.reload();
     } else {
       throw new ConcurrentModificationException(
           "Cannot reload OffHeapWALIndex: concurrent modification detected.");
