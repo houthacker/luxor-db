@@ -90,6 +90,9 @@ public class OffHeapHashSet implements WALIndexTable {
   /** The storage of this set's metadata. */
   private final MemorySegment header;
 
+  /** The file offset at which the header is stored. */
+  private final long headerOffset;
+
   /** The storage of this set's data. */
   private MemorySegment data;
 
@@ -101,13 +104,32 @@ public class OffHeapHashSet implements WALIndexTable {
    * required.
    *
    * @param file The memory-mapped file.
-   * @param offset The offset in the memory-mapped file for the {@link MemorySegment} of this
-   *     HashSet.
+   * @param minOffset The minimum offset in the memory-mapped file for the {@link MemorySegment} of
+   *     this HashSet.
    */
-  public OffHeapHashSet(final LuxorFile file, final long offset) throws IOException {
+  public OffHeapHashSet(final LuxorFile file, final long minOffset) throws IOException {
     this.file = requireNonNull(file, "file");
-    this.header = this.file.mapShared(offset, LAYOUT.byteSize());
+    this.headerOffset = align(minOffset, LAYOUT.byteAlignment());
+
+    this.header = this.file.mapShared(this.headerOffset, LAYOUT.byteSize());
     this.data = this.acquireData();
+  }
+
+  /**
+   * Aligns {@code offset} to {@code alignment}. The returned value is never less than {@code
+   * offset}.
+   *
+   * @param offset The offset to align.
+   * @param alignment The alignment to align to.
+   * @return The aligned offset.
+   */
+  private static long align(final long offset, final long alignment) {
+    final long remainder = offset % alignment;
+    if (remainder == 0) {
+      return offset;
+    }
+
+    return offset + remainder;
   }
 
   /**
@@ -147,7 +169,7 @@ public class OffHeapHashSet implements WALIndexTable {
     MemorySegment d =
         fillWithEmptyEntries(
             this.file.mapShared(
-                ENTRY_LAYOUT.byteSize(), INITIAL_CAPACITY * ENTRY_LAYOUT.byteSize()));
+                this.headerOffset + LAYOUT.byteSize(), INITIAL_CAPACITY * ENTRY_LAYOUT.byteSize()));
     this.header.set(ValueLayout.JAVA_INT, HASH_SET_SIZE_OFFSET, 0);
     this.header.set(ValueLayout.JAVA_INT, HASH_SET_CAPACITY_OFFSET, INITIAL_CAPACITY);
     this.header.set(
@@ -232,9 +254,10 @@ public class OffHeapHashSet implements WALIndexTable {
         final MemorySegment temp =
             arena.allocate(ENTRY_LAYOUT.byteSize() * oldCapacity).copyFrom(this.data);
 
-        MemorySegment extended =
+        MemorySegment extendedData =
             fillWithEmptyEntries(
-                this.file.mapShared(LAYOUT.byteSize(), ENTRY_LAYOUT.byteSize() * newCapacity));
+                this.file.mapShared(
+                    this.headerOffset + LAYOUT.byteSize(), ENTRY_LAYOUT.byteSize() * newCapacity));
 
         this.setSize(0);
         this.setCapacity(newCapacity);
@@ -248,7 +271,7 @@ public class OffHeapHashSet implements WALIndexTable {
 
           if (key != -1) {
             try {
-              this.putInternal(extended, key, value);
+              this.putInternal(extendedData, key, value);
             } catch (IOException e) {
               this.setSize(oldSize);
               this.setCapacity(oldCapacity);
@@ -271,8 +294,8 @@ public class OffHeapHashSet implements WALIndexTable {
         this.header.set(
             ValueLayout.ADDRESS,
             LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(HASH_SET_DATA_NAME)),
-            extended);
-        this.data = extended;
+            extendedData);
+        this.data = extendedData;
         return this.data;
       }
     } finally {

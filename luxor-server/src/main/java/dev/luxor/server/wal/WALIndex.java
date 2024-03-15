@@ -1,7 +1,6 @@
 package dev.luxor.server.wal;
 
 import dev.luxor.server.concurrent.LockFailedException;
-
 import java.io.IOException;
 
 /**
@@ -10,7 +9,7 @@ import java.io.IOException;
  *
  * @author houthacker
  */
-public interface WALIndex {
+public interface WALIndex extends AutoCloseable {
 
   /**
    * Returns the header of this index.
@@ -36,9 +35,8 @@ public interface WALIndex {
    * @param page The number of the page that must be contained in the frame.
    * @return The number of the frame containing the given page, or {@code -1} if no such frame
    *     exists.
-   * @throws IOException If an I/O error occurs while iterating through the index.
    */
-  int findFrame(final long page) throws IOException;
+  int findFrame(final long page);
 
   /**
    * Maps {@code page} to {@code frame} so it can be searched for later.

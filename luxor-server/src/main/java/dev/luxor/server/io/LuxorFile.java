@@ -93,6 +93,15 @@ public final class LuxorFile implements ReadWriteLock, AutoCloseable {
   }
 
   /**
+   * Returns the absolute path of this file.
+   *
+   * @return The file path.
+   */
+  public Path path() {
+    return this.path;
+  }
+
+  /**
    * Tells whether this file is open.<br>
    * If the file is not open, it cannot be used anymore and calling threads must obtain a new {@link
    * LuxorFile} instance.

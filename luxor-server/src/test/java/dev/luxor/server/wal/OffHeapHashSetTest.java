@@ -14,7 +14,7 @@ class OffHeapHashSetTest {
   void testFlushAndCopy() throws IOException {
     try (final LuxorFile mmap =
         LuxorFile.open(
-            Files.createTempFile("luxor-off-heap-hashset-", ""),
+            Files.createTempFile("OffHeapHashSetTest-", ""),
             StandardOpenOption.READ,
             StandardOpenOption.WRITE,
             StandardOpenOption.CREATE)) {

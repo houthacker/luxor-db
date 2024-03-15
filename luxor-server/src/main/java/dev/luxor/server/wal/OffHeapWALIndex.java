@@ -27,6 +27,7 @@ public class OffHeapWALIndex implements WALIndex {
       MemoryLayout.sequenceLayout(2, OffHeapWALIndexHeader.LAYOUT);
 
   static {
+    // If the byte size changes, the main index layout might require padding.
     assert HEADERS_LAYOUT.byteSize() == 4;
   }
 
@@ -35,6 +36,15 @@ public class OffHeapWALIndex implements WALIndex {
               HEADERS_LAYOUT.withName("header"),
               MemoryLayout.sequenceLayout(8, ValueLayout.JAVA_BYTE).withName("locks"))
           .withName("wal_index");
+
+  static {
+
+    // Since the alignment requirement of the index layout is so small, we don't really have to
+    // take care of our writes to the related MemorySegment. If this alignment changes in the
+    // future, we might have to rethink this. The OffHeapHashSet already does this, so that can be
+    // used as an example.
+    assert LAYOUT.byteAlignment() == 2;
+  }
 
   private final LuxorFile file;
 
@@ -61,7 +71,7 @@ public class OffHeapWALIndex implements WALIndex {
   public OffHeapWALIndex(final LuxorFile file) throws IOException {
     this.memory =
         requireNonNull(file, "Cannot create OffHeapWALIndex: backing file must be non-null.")
-            .mapShared(0L, HEADERS_LAYOUT.byteSize());
+            .mapShared(0L, LAYOUT.byteSize());
 
     final OffHeapWALIndexHeader[] h = loadHeaders(memory);
     if (h[0].equals(h[1])) {
@@ -147,7 +157,7 @@ public class OffHeapWALIndex implements WALIndex {
 
   /** {@inheritDoc} */
   @Override
-  public int findFrame(final long page) throws IOException {
+  public int findFrame(final long page) {
     return this.table.keyOf(page);
   }
 
@@ -182,25 +192,28 @@ public class OffHeapWALIndex implements WALIndex {
   /** {@inheritDoc} */
   @Override
   public void unlock() {
+    if (this.currentLockType != WALLockType.none) {
 
-    // First, we attempt to unlock the file (process) lock.
-    // This must be done first, because otherwise overlapping locks might be acquired by the current
-    // JVM instance (the memory locks are of course already released in that case).
-    try {
-      this.processLock.release();
-    } catch (IOException e) {
-      log.warn("Could not unlock WAL index file lock, but must proceed as if it were unlocked", e);
+      // Attempt to unlock the file (process) lock.
+      // This must be done first, because otherwise overlapping locks might be acquired by the
+      // current JVM instance (the memory locks are of course already released in that case).
+      try {
+        this.processLock.release();
+      } catch (IOException e) {
+        log.warn(
+            "Could not unlock WAL index file lock, but must proceed as if it were unlocked", e);
+      }
+
+      // Only then release the memory locks.
+      if (this.currentLockType == WALLockType.shared) {
+        this.file.readLock().unlock();
+      } else if (this.currentLockType == WALLockType.exclusive) {
+        this.file.writeLock().unlock();
+      }
+
+      this.processLock = null;
+      this.currentLockType = WALLockType.none;
     }
-
-    // Only then release the memory locks.
-    if (this.currentLockType == WALLockType.shared) {
-      this.file.readLock().unlock();
-    } else if (this.currentLockType == WALLockType.exclusive) {
-      this.file.writeLock().unlock();
-    }
-
-    this.processLock = null;
-    this.currentLockType = WALLockType.none;
   }
 
   /**
@@ -220,5 +233,12 @@ public class OffHeapWALIndex implements WALIndex {
       throw new ConcurrentModificationException(
           "Cannot reload OffHeapWALIndex: concurrent modification detected.");
     }
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public void close() throws IOException {
+    this.unlock();
+    this.file.close();
   }
 }

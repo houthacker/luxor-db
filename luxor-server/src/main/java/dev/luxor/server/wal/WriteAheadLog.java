@@ -1,6 +1,10 @@
 package dev.luxor.server.wal;
 
 import dev.luxor.server.concurrent.LockFailedException;
+import dev.luxor.server.io.CorruptPageException;
+import dev.luxor.server.io.NoSuchPageException;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 
 /**
  * Interface for all {@code luxor} write-ahead-log (WAL) implementations.
@@ -33,10 +37,9 @@ import dev.luxor.server.concurrent.LockFailedException;
  * database in asynchronous mode will allow more throughput and more efficient use of CPU and disk
  * resources at the cost of a lower durability (a higher risk of data loss).
  *
- * <p>The default WAL implementation ({@link ProcessSharedWAL}) used by {@code luxor} supports
- * synchronizing WAL contents to storage, but other implementations might not. Whether these
- * implementations support synchronization to persistent storage must be documented by these
- * implementations.
+ * <p>The default WAL implementation ({@link LocalWAL}) used by {@code luxor} supports synchronizing
+ * WAL contents to storage, but other implementations might not. Whether these implementations
+ * support synchronization to persistent storage must be documented by these implementations.
  *
  * <h5>Isolation</h5>
  *
@@ -79,7 +82,20 @@ import dev.luxor.server.concurrent.LockFailedException;
  *
  * @author houthacker
  */
-public interface WriteAheadLog {
+public interface WriteAheadLog extends AutoCloseable {
+
+  /**
+   * Reads the WAL header from the backing storage.
+   *
+   * <p>The header of this WAL keeps track of changes to the WAL file. In case of a system failure,
+   * this header is used to recover and clean up the WAL file, removing any stale data from
+   * uncommitted transactions.
+   *
+   * @return The WAL header.
+   * @throws IOException If an I/O error occurs while reading the header.
+   * @throws CorruptWALException If the WAL is corrupted.
+   */
+  WALHeader header() throws IOException, CorruptWALException;
 
   /**
    * Begins a new read transaction. If the calling thread already is in a transaction (read or
@@ -94,6 +110,29 @@ public interface WriteAheadLog {
    */
   void beginReadTransaction() throws LockFailedException;
 
-  /** Releases the shared lock held by the calling thread, ending the transaction. */
+  /**
+   * Releases the shared lock held by the calling thread, ending the transaction. If no transaction
+   * is running, this method has no effect.
+   */
   void endReadTransaction();
+
+  /**
+   * Returns the frame number in which {@code pageNumber} is stored, or {@code -1} if no such frame
+   * exists.
+   *
+   * @param pageNumber The page number to search for.
+   * @return The frame index.
+   */
+  int frameIndexOf(final long pageNumber);
+
+  /**
+   * Reads the page at {@code frameIndex}.
+   *
+   * @param frameIndex The frame index to read.
+   * @return A {@link ByteBuffer} containing the page content.
+   * @throws CorruptPageException If the page cannot be read completely.
+   * @throws IOException If an I/O error occurs while reading the page.
+   * @throws NoSuchPageException If the file contains no frame with {@code frameIndex}.
+   */
+  ByteBuffer pageAt(final int frameIndex) throws IOException, NoSuchPageException;
 }
