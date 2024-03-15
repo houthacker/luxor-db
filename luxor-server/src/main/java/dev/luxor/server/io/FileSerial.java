@@ -107,7 +107,7 @@ public final class FileSerial implements ReadWriteLock {
       GLOBAL_SERIAL_GUARD.readLock().unlock();
     }
 
-    log.trace("FileSerial of path {} not yet referenced; creating new reference.", path);
+    log.trace("FileSerial {} of path {} not yet referenced; creating new reference.", key, path);
     serial = new FileSerial(key);
     serial.previous = tail;
 
@@ -142,7 +142,8 @@ public final class FileSerial implements ReadWriteLock {
   public void dereference() {
     // If decreasing the reference count yields zero, remove the FileSerial from the linked list.
     if (this.referenceCount() > 0 && this.refCount.decrementAndGet() == 0) {
-      log.trace("FileSerial has no more references; removing it from the linked list.");
+      log.trace(
+          "FileSerial {} has no more references; removing it from the linked list.", this.key);
 
       // Removing the serial is a structural change, acquire the write lock.
       GLOBAL_SERIAL_GUARD.writeLock().lock();

@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dev.luxor.server.io.LuxorFile;
 import java.io.IOException;
-import java.lang.foreign.MemorySegment;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 import org.junit.jupiter.api.Test;
@@ -15,7 +14,7 @@ class OffHeapWALIndexTest {
   void forceAllocateIndexPage() throws IOException {
     try (final LuxorFile shm =
         LuxorFile.open(
-            Files.createTempFile("luxor-off-heap-wall-index-", ""),
+            Files.createTempFile("OffHeapWALIndexTest-", ""),
             StandardOpenOption.READ,
             StandardOpenOption.WRITE,
             StandardOpenOption.CREATE)) {

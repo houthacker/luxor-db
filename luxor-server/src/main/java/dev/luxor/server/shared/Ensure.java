@@ -29,17 +29,6 @@ public class Ensure {
   }
 
   /**
-   * Ensures {@code subject} is at least zero.
-   *
-   * @param subject The subject value.
-   * @return {@code subject}.
-   * @throws IllegalArgumentException if {@code subject < 0}.
-   */
-  public static long ensureAtLeastZero(final long subject) {
-    return ensureAtLeast(subject, 0);
-  }
-
-  /**
    * Ensures the value of {@code subject} is at least {@code atLeast}.
    *
    * @param subject The subject to compare.
@@ -62,7 +51,40 @@ public class Ensure {
    * @return {@code subject}.
    * @throws IllegalArgumentException if {@code subject < 0}.
    */
+  public static long ensureAtLeastZero(final long subject) {
+    return ensureAtLeast(subject, 0L);
+  }
+
+  /**
+   * Ensures {@code subject} is at least zero.
+   *
+   * @param subject The subject value.
+   * @return {@code subject}.
+   * @throws IllegalArgumentException if {@code subject < 0}.
+   */
   public static int ensureAtLeastZero(final int subject) {
     return ensureAtLeast(subject, 0);
+  }
+
+  /**
+   * Ensures {@code subject} is at least one.
+   *
+   * @param subject The subject value.
+   * @return {@code subject}.
+   * @throws IllegalArgumentException if {@code subject < 1}.
+   */
+  public static long ensureAtLeastOne(final long subject) {
+    return ensureAtLeast(subject, 1L);
+  }
+
+  /**
+   * Ensures {@code subject} is at least one.
+   *
+   * @param subject The subject value.
+   * @return {@code subject}.
+   * @throws IllegalArgumentException if {@code subject < 1}.
+   */
+  public static int ensureAtLeastOne(final int subject) {
+    return ensureAtLeast(subject, 1);
   }
 }

@@ -29,6 +29,15 @@ public final class FNV1a {
   }
 
   /**
+   * Creates a new {@link FNV1a} instance that is set to a pre-initialized state.
+   *
+   * @param state The pre-initialized state.
+   */
+  public FNV1a(final long state) {
+    this.state = state;
+  }
+
+  /**
    * Calculates the FNV1a hash of the given message, using its values at index {@code start} to
    * {@code length}. If the given message is {@code null}, this method will have no effect.
    *
@@ -44,6 +53,53 @@ public final class FNV1a {
         this.state *= FNV_PRIME;
         this.state ^= message.get(i);
       }
+    }
+
+    return this;
+  }
+
+  /**
+   * Appends {@code value} to the current hash state.
+   *
+   * @param value The integer value to hash.
+   * @return This instance.
+   */
+  public FNV1a iterate(final int value) {
+    final byte[] bytes =
+        new byte[] {
+          (byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value
+        };
+
+    for (byte b : bytes) {
+      this.state *= FNV_PRIME;
+      this.state ^= b;
+    }
+
+    return this;
+  }
+
+  /**
+   * Appends {@code value} to the current hash state.
+   *
+   * @param value The long value to hash.
+   * @return This instance.
+   */
+  public FNV1a iterate(final long value) {
+    final byte[] bytes =
+        new byte[] {
+          (byte) (value >>> 56),
+          (byte) (value >>> 48),
+          (byte) (value >>> 40),
+          (byte) (value >>> 32),
+          (byte) (value >>> 24),
+          (byte) (value >>> 16),
+          (byte) (value >>> 8),
+          (byte) value
+        };
+
+    for (byte b : bytes) {
+      this.state *= FNV_PRIME;
+      this.state ^= b;
     }
 
     return this;

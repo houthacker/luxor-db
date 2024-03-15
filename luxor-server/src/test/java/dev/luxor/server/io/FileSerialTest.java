@@ -11,7 +11,7 @@ class FileSerialTest {
 
   @Test
   void testAcquireRelease() throws IOException {
-    final Path temp = Files.createTempFile("inode_test", ".tmp");
+    final Path temp = Files.createTempFile("FileSerialTest-", ".tmp");
 
     final FileSerial serial = FileSerial.find(temp);
     assertNotNull(serial, String.format("Expect an FileSerial to be found for path %s", temp));
