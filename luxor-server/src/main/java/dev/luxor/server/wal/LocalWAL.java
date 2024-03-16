@@ -139,7 +139,7 @@ public class LocalWAL implements WriteAheadLog {
       this.index.reload();
     }
 
-    this.index.lock(WALLockType.shared);
+    this.index.lock(WALLockType.SHARED);
   }
 
   /** {@inheritDoc} */

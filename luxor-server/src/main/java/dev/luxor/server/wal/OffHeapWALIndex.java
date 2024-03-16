@@ -1,7 +1,7 @@
 package dev.luxor.server.wal;
 
 import static dev.luxor.server.shared.Ensure.ensureAtLeastZero;
-import static java.util.Objects.*;
+import static java.util.Objects.requireNonNull;
 
 import dev.luxor.server.concurrent.LockFailedException;
 import dev.luxor.server.io.LuxorFile;
@@ -31,10 +31,13 @@ public class OffHeapWALIndex implements WALIndex {
     assert HEADERS_LAYOUT.byteSize() == 4;
   }
 
+  /** The amount of lock types. Each lock type has its own lock byte in the backing file. */
+  private static final int FILE_LOCK_COUNT = 8;
+
   private static final MemoryLayout LAYOUT =
       MemoryLayout.structLayout(
               HEADERS_LAYOUT.withName("header"),
-              MemoryLayout.sequenceLayout(8, ValueLayout.JAVA_BYTE).withName("locks"))
+              MemoryLayout.sequenceLayout(FILE_LOCK_COUNT, ValueLayout.JAVA_BYTE).withName("locks"))
           .withName("wal_index");
 
   static {
@@ -46,17 +49,23 @@ public class OffHeapWALIndex implements WALIndex {
     assert LAYOUT.byteAlignment() == 2;
   }
 
+  /** The backing file. */
   private final LuxorFile file;
 
+  /** The memory segment containing the WAL index header and lock bytes. */
   private final MemorySegment memory;
 
+  /** An on-heap copy of the wal index headers. */
   private final OffHeapWALIndexHeader[] headers;
 
+  /** The table containing the frame/page mappings. */
   private final OffHeapHashSet table;
 
-  private WALLockType currentLockType;
+  /** A bit-masked integer storing the lock types held at a given point in time. */
+  private int locks;
 
-  private FileLock processLock;
+  /** The file locks, one entry per lock type, corresponding to the lock bytes. */
+  private final FileLock[] fileLocks;
 
   /**
    * Creates a new {@link OffHeapWALIndex}. To determine if the index is modified while reading it
@@ -75,7 +84,8 @@ public class OffHeapWALIndex implements WALIndex {
 
     final OffHeapWALIndexHeader[] h = loadHeaders(memory);
     if (h[0].equals(h[1])) {
-      this.currentLockType = WALLockType.none;
+      this.locks = WALLockType.NONE.mask();
+      this.fileLocks = new FileLock[FILE_LOCK_COUNT];
       this.file = file;
       this.headers = h;
       this.table = new OffHeapHashSet(file, LAYOUT.byteSize());
@@ -98,38 +108,107 @@ public class OffHeapWALIndex implements WALIndex {
   }
 
   /**
-   * Acquire a shared lock, assuming none is currently held.
+   * Returns whether a less restrictive lock than {@code requested} is already held.
    *
-   * @param position The file position to lock.
+   * @param requested The requested lock type.
+   * @return {@code true} if a less restrictive lock is held, {@code false} otherwise.
+   */
+  private boolean lockedLessRestrictiveThan(final WALLockType requested) {
+    return this.locks < requested.mask();
+  }
+
+  /**
+   * Returns whether a lock of the given type is currently held.
+   *
+   * @param type The lock type to check.
+   * @return {@code true} if a lock of the given type is currently held, {@code false} otherwise.
+   */
+  private boolean hasLock(final WALLockType type) {
+    return (this.locks & type.mask()) == type.mask();
+  }
+
+  /**
+   * Acquire a shared lock on the WAL index.
+   *
    * @throws LockFailedException If the lock cannot be acquired.
    */
-  private void lockShared(long position) throws LockFailedException {
-    this.file.readLock().lock();
+  private void lockShared() throws LockFailedException {
+    if (!this.hasLock(WALLockType.SHARED)) {
+      this.file.mutex().readLock().lock();
 
-    try {
-      this.file.lock(position, 1L, true);
-    } catch (IOException e) {
-      this.file.readLock().unlock();
+      try {
+        final int position = WALLockType.SHARED.offset();
+        this.fileLocks[position] = this.file.lock(position, 1L, true);
+        this.locks |= WALLockType.SHARED.mask();
+      } catch (IOException e) {
+        this.file.mutex().readLock().unlock();
+        throw new LockFailedException("Cannot obtain shared lock on WAL index file.", e);
+      }
+    }
+  }
 
-      throw new LockFailedException("Cannot obtain shared lock on WAL index file.", e);
+  /** Release a shared lock on the WAL index. If no lock is held, this method has no effect. */
+  private void unlockShared() {
+    if (this.hasLock(WALLockType.SHARED)) {
+      final int position = WALLockType.SHARED.offset();
+      try {
+        this.fileLocks[position].release();
+      } catch (IOException e) {
+        log.warn(
+            "Could not unlock shared WAL index file lock, but must proceed as if it were unlocked.",
+            e);
+      }
+
+      this.fileLocks[position] = null;
+      this.file.mutex().readLock().unlock();
+      this.locks ^= WALLockType.SHARED.mask();
     }
   }
 
   /**
-   * Acquire an exclusive lock, assuming none is currently held.
+   * Acquire an exclusive lock.
    *
-   * @param position The file position to lock.
    * @throws LockFailedException If the lock cannot be acquired.
    */
-  private void lockExclusive(long position) throws LockFailedException {
-    this.file.writeLock().lock();
+  private void lockExclusive() throws LockFailedException {
+    if (!this.hasLock(WALLockType.EXCLUSIVE)) {
 
-    try {
-      this.file.lock(position, 1L, false);
-    } catch (IOException e) {
-      this.file.writeLock().unlock();
+      // To acquire an exclusive lock, a shared lock must also be held, because a shared lock
+      // prevents
+      // a checkpoint from being executed.
+      // To support lock upgrades (a read transaction might become a write transaction), if no
+      // shared
+      // lock is held at this time, one will be acquired.
+      this.lock(WALLockType.SHARED);
 
-      throw new LockFailedException("Cannot obtain exclusive lock on WAL index file.", e);
+      this.file.lock().lock();
+      try {
+        final int position = WALLockType.EXCLUSIVE.offset();
+        this.fileLocks[position] = this.file.lock(position, 1L, false);
+        this.locks |= WALLockType.EXCLUSIVE.mask();
+      } catch (IOException e) {
+        this.file.lock().unlock();
+
+        throw new LockFailedException("Cannot obtain exclusive lock on WAL index file.", e);
+      }
+    }
+  }
+
+  /** Release an exclusive lock. If no exclusive lock is held, this method has no effect. */
+  private void unlockExclusive() {
+    if (this.hasLock(WALLockType.EXCLUSIVE)) {
+      final int position = WALLockType.EXCLUSIVE.offset();
+      try {
+        this.fileLocks[position].release();
+      } catch (IOException e) {
+        log.warn(
+            "Could not unlock shared WAL index file lock, but must proceed as if it were unlocked.",
+            e);
+      }
+
+      this.fileLocks[position] = null;
+      this.file.lock().unlock();
+      this.locks ^= WALLockType.EXCLUSIVE.mask();
     }
   }
 
@@ -172,17 +251,11 @@ public class OffHeapWALIndex implements WALIndex {
   public void lock(final WALLockType type) throws LockFailedException {
     requireNonNull(type, "requested lock type must be non-null.");
 
-    if (this.currentLockType.compareTo(type) <= 0) {
-      if (this.currentLockType != WALLockType.none) {
-        // A lock upgrade is requested, but this is not semantically supported. So, to acquire a
-        // more restrictive lock, we first need to release the current lock.
-        this.unlock();
-      }
-
-      if (type == WALLockType.shared) {
-        this.lockShared(type.ordinal());
-      } else if (type == WALLockType.exclusive) {
-        this.lockExclusive(type.ordinal());
+    if (this.lockedLessRestrictiveThan(type)) {
+      if (type == WALLockType.SHARED) {
+        this.lockShared();
+      } else if (type == WALLockType.EXCLUSIVE) {
+        this.lockExclusive();
       }
     }
 
@@ -192,27 +265,16 @@ public class OffHeapWALIndex implements WALIndex {
   /** {@inheritDoc} */
   @Override
   public void unlock() {
-    if (this.currentLockType != WALLockType.none) {
+    if (this.locks != WALLockType.NONE.mask()) {
 
-      // Attempt to unlock the file (process) lock.
-      // This must be done first, because otherwise overlapping locks might be acquired by the
-      // current JVM instance (the memory locks are of course already released in that case).
-      try {
-        this.processLock.release();
-      } catch (IOException e) {
-        log.warn(
-            "Could not unlock WAL index file lock, but must proceed as if it were unlocked", e);
+      // If we're locked (as indicated by this.locks), then the shared lock is always held.
+      // If the exclusive lock is held as well, unlock that first, since otherwise a checkpoint may
+      // start before the exclusive lock has been released.
+      if (this.hasLock(WALLockType.EXCLUSIVE)) {
+        this.unlockExclusive();
       }
 
-      // Only then release the memory locks.
-      if (this.currentLockType == WALLockType.shared) {
-        this.file.readLock().unlock();
-      } else if (this.currentLockType == WALLockType.exclusive) {
-        this.file.writeLock().unlock();
-      }
-
-      this.processLock = null;
-      this.currentLockType = WALLockType.none;
+      this.unlockShared();
     }
   }
 
