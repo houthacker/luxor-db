@@ -15,8 +15,8 @@ import java.nio.channels.NonWritableChannelException;
 import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
-import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,10 +36,22 @@ import org.slf4j.LoggerFactory;
  * each thread with its own file descriptor, ensuring that the underlying {@link FileChannel} cannot
  * be used by other threads.
  *
+ * <h4>Locking</h4>
+ *
+ * <p>A {@link LuxorFile} supports three disjoint locking features. An explanation of these features
+ * can be found at their respective methods:
+ *
+ * <ol>
+ *   <li>In-process read/write mutual exclusive locking using {@link LuxorFile#mutex()}
+ *   <li>In-process basic exclusive locking using {@link LuxorFile#lock()}
+ *   <li>Intra-process file locks using {@link LuxorFile#lock(long, long, boolean)} and {@link
+ *       LuxorFile#tryLock(long, long, boolean)}
+ * </ol>
+ *
  * <h4>Interrupts</h4>
  *
- * <p>Since {@link LuxorFile#read(ByteBuffer, long)}, {@link LuxorFile#writeLock()} and some other
- * methods are blocking until they either fail or achieve their goal, it is possible that the
+ * <p>Since {@link LuxorFile#read(ByteBuffer, long)}, {@link LuxorFile#write(ByteBuffer, long)} and
+ * some other methods block until they either fail or achieve their goal, it is possible that the
  * current thread gets interrupted while executing those methods. When that happens, the {@link
  * FileChannel} that is used to manipulate the file will be closed and must be reopened to allow
  * further usage. Calling threads should catch the explicit exceptions thrown by these methods to
@@ -47,7 +59,7 @@ import org.slf4j.LoggerFactory;
  *
  * @author houthacker
  */
-public final class LuxorFile implements ReadWriteLock, AutoCloseable {
+public final class LuxorFile implements AutoCloseable {
 
   private static final Logger log = LoggerFactory.getLogger(LuxorFile.class);
 
@@ -213,21 +225,32 @@ public final class LuxorFile implements ReadWriteLock, AutoCloseable {
     this.channel.force(false);
   }
 
-  /** {@inheritDoc} */
-  @Override
-  public Lock readLock() {
-    return this.serial.readLock();
+  /**
+   * Returns an object that maintains a pair of associated r/w locks. The read lock can be held
+   * simultaneously by multiple readers, while the write lock is exclusive. This mutex does not
+   * synchronize or coordinate with {@link LuxorFile#lock()} or any of the {@link FileLock} methods.
+   *
+   * @return The mutex lock of this {@link LuxorFile}.
+   */
+  public ReadWriteLock mutex() {
+    return this.serial.mutex();
   }
 
-  /** {@inheritDoc} */
-  @Override
-  public Lock writeLock() {
-    return this.serial.writeLock();
+  /**
+   * Returns a basic exclusive lock. This lock does not synchronize or coordinate with {@link
+   * LuxorFile#mutex()} or any of the {@link FileLock} methods.
+   *
+   * @return The exclusive lock of this {@link LuxorFile}.
+   */
+  public ReentrantLock lock() {
+    return this.serial.lock();
   }
 
   /**
    * Acquires a lock on the given region of this file. An extended description of the implementation
-   * can be found at {@link FileChannel#lock(long, long, boolean)}.
+   * can be found at {@link FileChannel#lock(long, long, boolean)}. This lock synchronizes with
+   * {@link LuxorFile#tryLock(long, long, boolean)}, but not with {@link LuxorFile#mutex()} and
+   * {@link LuxorFile#lock()}.
    *
    * @param position The position at which the locked region is to start; must be non-negative.
    * @param size The size of the locked region; must be non-negative, and the sum {@code position +
@@ -262,7 +285,9 @@ public final class LuxorFile implements ReadWriteLock, AutoCloseable {
   /**
    * Attempts to acquire a lock on the given region of this file. If the lock cannot be acquired,
    * this method returns immediately. An extended description of the implementation can be found at
-   * {@link FileChannel#tryLock(long, long, boolean)}.
+   * {@link FileChannel#tryLock(long, long, boolean)}. This lock synchronizes with {@link
+   * LuxorFile#lock(long, long, boolean)}, but not with {@link LuxorFile#mutex()} and {@link
+   * LuxorFile#lock()}.
    *
    * @param position The position at which the locked region is to start; must be non-negative.
    * @param size The size of the locked region; must be non-negative, and the sum {@code position +

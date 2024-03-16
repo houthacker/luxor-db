@@ -51,6 +51,8 @@ public interface WALIndex extends AutoCloseable {
    * Acquires a lock of {@code type} on this index. These locks will control concurrency within the
    * JVM as well as between processes competing for conflicting locks.
    *
+   * <p>If an exclusive lock is requested, a shared lock is also acquired if none is held yet.
+   *
    * <p>If a lock of {@code type} is already held by the calling thread, this method will have no
    * (additional) effect.
    *
@@ -59,9 +61,6 @@ public interface WALIndex extends AutoCloseable {
    */
   void lock(final WALLockType type) throws LockFailedException;
 
-  /**
-   * Releases a currently held lock on this index.<br>
-   * If no lock is currently held, this method has no effect.
-   */
+  /** Releases any locks currently held. If no lock is currently held, this method has no effect. */
   void unlock();
 }

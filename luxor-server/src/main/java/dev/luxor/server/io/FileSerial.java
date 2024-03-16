@@ -9,8 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,7 +20,7 @@ import org.slf4j.LoggerFactory;
  *
  * @author houthacker
  */
-public final class FileSerial implements ReadWriteLock {
+public final class FileSerial {
 
   private static final Logger log = LoggerFactory.getLogger(FileSerial.class);
 
@@ -39,8 +38,11 @@ public final class FileSerial implements ReadWriteLock {
   /** The unique identifying object of this {@code FileSerial}. */
   private final Object key;
 
-  /** The r/w lock to (un)lock this {@code FileSerial}. */
-  private final ReentrantReadWriteLock guard;
+  /** A mutex to synchronize readers and writers of the referencing {@link LuxorFile}s. */
+  private final ReentrantReadWriteLock mutex;
+
+  /** A more simple lock to synchronize writers of the referencing {@link LuxorFile}s. */
+  private final ReentrantLock lock;
 
   /** The amount of objects (in the current JVM) that refer to this {@code FileSerial}. */
   private final AtomicInteger refCount;
@@ -53,7 +55,8 @@ public final class FileSerial implements ReadWriteLock {
 
   private FileSerial(final Object key) {
     this.key = key;
-    this.guard = new ReentrantReadWriteLock();
+    this.mutex = new ReentrantReadWriteLock();
+    this.lock = new ReentrantLock();
     this.refCount = new AtomicInteger(1);
   }
 
@@ -116,12 +119,9 @@ public final class FileSerial implements ReadWriteLock {
 
       // If the tail is not null, move it before serial.
       if (nonNull(tail)) {
-        final Lock lock = tail.writeLock();
-        lock.lock();
-        try {
+        final FileSerial subject = tail;
+        synchronized (subject) {
           tail.next = serial;
-        } finally {
-          lock.unlock();
         }
       }
 
@@ -150,28 +150,30 @@ public final class FileSerial implements ReadWriteLock {
       try {
         if (nonNull(this.previous) && nonNull(this.next)) {
 
-          Locks.exclusiveLock(this.previous.guard, this.next.guard);
+          Locks.exclusiveLock(this.previous.mutex, this.next.mutex);
           try {
             this.previous.next = this.next;
             this.next.previous = this.previous;
           } finally {
-            Locks.exclusiveUnlock(this.previous.guard, this.next.guard);
+            Locks.exclusiveUnlock(this.previous.mutex, this.next.mutex);
           }
         } else if (nonNull(this.previous)) {
-          final Lock lock = this.previous.writeLock();
-          lock.lock();
-          try {
+          final FileSerial subject = this.previous;
+
+          // A FileSerial does provide locks itself, but these do not interact and therefore no real
+          // exclusive access to the FileSerial object can be acquired by using these. Therefore,
+          // synchronize on the FileSerial object when structural changes to it must be made.
+          synchronized (subject) {
             this.previous.next = this.next;
-          } finally {
-            lock.unlock();
           }
         } else if (nonNull(this.next)) {
-          final Lock lock = this.next.writeLock();
-          lock.lock();
-          try {
+          final FileSerial subject = this.next;
+
+          // A FileSerial does provide locks itself, but these do not interact and therefore no real
+          // exclusive access to the FileSerial object can be acquired by using these. Therefore,
+          // synchronize on the FileSerial object when structural changes to it must be made.
+          synchronized (subject) {
             this.next.previous = this.previous;
-          } finally {
-            lock.unlock();
           }
         }
 
@@ -187,23 +189,25 @@ public final class FileSerial implements ReadWriteLock {
   }
 
   /**
-   * Returns the lock that must be owned when shared access to this serial is required.
+   * Returns a mutex to synchronize read/write access to referencing {@link LuxorFile}s.
    *
-   * @return The shared lock.
+   * @apiNote This lock is <em>not</em> meant to acquire r/w access to the {@link FileSerial} object
+   *     itself, but rather to coordinate accesses to any related {@link LuxorFile}s.
+   * @return The mutex lock.
    */
-  @Override
-  public Lock readLock() {
-    return this.guard.readLock();
+  public ReentrantReadWriteLock mutex() {
+    return this.mutex;
   }
 
   /**
-   * Returns the lock that must be owned when exclusive access to this serial is required.
+   * Returns a lock to synchronize referencing {@link LuxorFile} accesses.
    *
-   * @return The unique lock.
+   * @apiNote This lock is <em>not</em> meant to acquire access to the {@link FileSerial} object
+   *     itself, but rather to coordinate accesses to any related {@link LuxorFile}s.
+   * @return The exclusive lock.
    */
-  @Override
-  public Lock writeLock() {
-    return this.guard.writeLock();
+  public ReentrantLock lock() {
+    return this.lock;
   }
 
   /**
