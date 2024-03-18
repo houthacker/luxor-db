@@ -1,6 +1,16 @@
 plugins {
     id 'java-library'
+    id 'org.sonarqube' version '4.4.1.3373'
 }
 
 group = 'dev.luxor-db'
 version = '0.0.1-SNAPSHOT'
+
+sonar {
+    properties {
+        property "sonar.gradle.skipCompile", "true"
+        property "sonar.projectKey", "houthacker_luxor-db"
+        property "sonar.organization", "houthacker"
+        property "sonar.host.url", "https://sonarcloud.io"
+    }
+}
