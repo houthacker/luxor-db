@@ -166,17 +166,10 @@ public final class OffHeapHashSet implements WALIndexTable {
    * @return The filled memory segment.
    */
   private static MemorySegment fillWithEmptyEntries(final MemorySegment memory) {
-
-    memory
-        .elements(ENTRY_LAYOUT)
-        .forEach(
-            entry -> {
-              entry.set(
-                  ValueLayout.JAVA_LONG,
-                  KEY_OFFSET,
-                  0xffffffff00000000L); // int(-1) and zeroed padding
-              entry.set(ValueLayout.JAVA_LONG, VALUE_OFFSET, -1L);
-            });
+    for (long l = 0; l < memory.byteSize(); l += ENTRY_LAYOUT.byteSize()) {
+      memory.set(ValueLayout.JAVA_LONG, l, 0xffffffff00000000L); // int(-1) and zeroed padding
+      memory.set(ValueLayout.JAVA_LONG, l, -1L);
+    }
 
     return memory;
   }
