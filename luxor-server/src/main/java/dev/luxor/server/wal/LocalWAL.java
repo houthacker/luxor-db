@@ -20,8 +20,9 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * @author houthacker
  */
-public class LocalWAL implements WriteAheadLog {
+public final class LocalWAL implements WriteAheadLog {
 
+  /** The global lock that must be used when creating a new WAL file. */
   private static final ReentrantLock INIT_LOCK = new ReentrantLock();
 
   /** The actual file containing the WAL. */
@@ -76,6 +77,8 @@ public class LocalWAL implements WriteAheadLog {
 
     final Path walPath = Path.of(String.format("%s-wal", dbPathString));
     final Path walIndexPath = Path.of(String.format("%s-shm", dbPathString));
+    final LocalWAL wal;
+
     if (Files.exists(walPath)) {
       // If the WAL exists, there are a few scenarios:
       //
@@ -87,43 +90,47 @@ public class LocalWAL implements WriteAheadLog {
       // state of the other.
       // Because of that, the wal index is opened normally, and only throws an exception if it
       // detects that a recovery is required.
-      return new LocalWAL(
-          LuxorFile.open(
-              walPath,
-              StandardOpenOption.READ,
-              StandardOpenOption.WRITE,
-              StandardOpenOption.CREATE),
-          new OffHeapWALIndex(
+      wal =
+          new LocalWAL(
               LuxorFile.open(
-                  walIndexPath,
+                  walPath,
                   StandardOpenOption.READ,
                   StandardOpenOption.WRITE,
-                  StandardOpenOption.CREATE)));
+                  StandardOpenOption.CREATE),
+              new OffHeapWALIndex(
+                  LuxorFile.open(
+                      walIndexPath,
+                      StandardOpenOption.READ,
+                      StandardOpenOption.WRITE,
+                      StandardOpenOption.CREATE)));
     } else {
       INIT_LOCK.lock();
       try {
         // Open the WAL- and index file, throwing an exception if someone beat us to it and did
         // create the WAL file in the meantime. In that case, clients should just retry to open the
         // WAL.
-        return new LocalWAL(
-                LuxorFile.open(
-                    walPath,
-                    StandardOpenOption.READ,
-                    StandardOpenOption.WRITE,
-                    StandardOpenOption.CREATE_NEW),
-                new OffHeapWALIndex(
+        wal =
+            new LocalWAL(
                     LuxorFile.open(
-                        walIndexPath,
+                        walPath,
                         StandardOpenOption.READ,
                         StandardOpenOption.WRITE,
-                        StandardOpenOption.CREATE_NEW)))
+                        StandardOpenOption.CREATE_NEW),
+                    new OffHeapWALIndex(
+                        LuxorFile.open(
+                            walIndexPath,
+                            StandardOpenOption.READ,
+                            StandardOpenOption.WRITE,
+                            StandardOpenOption.CREATE_NEW)))
 
-            // Write a default header to the file after it's opened.
-            .initialize();
+                // Write a default header to the file after it's opened.
+                .initialize();
       } finally {
         INIT_LOCK.unlock();
       }
     }
+
+    return wal;
   }
 
   /** {@inheritDoc} */
@@ -135,7 +142,7 @@ public class LocalWAL implements WriteAheadLog {
   /** {@inheritDoc} */
   @Override
   public void beginReadTransaction() throws LockFailedException {
-    if (!this.index.isCurrent()) {
+    if (this.index.isStale()) {
       this.index.reload();
     }
 
@@ -156,7 +163,7 @@ public class LocalWAL implements WriteAheadLog {
 
   /** {@inheritDoc} */
   @Override
-  public ByteBuffer pageAt(int frameIndex) throws IOException, NoSuchPageException {
+  public ByteBuffer pageAt(final int frameIndex) throws IOException, NoSuchPageException {
 
     // Check if the given frame is within the file bounds from the point of view of the calling
     // thread.
@@ -182,10 +189,28 @@ public class LocalWAL implements WriteAheadLog {
 
   /** {@inheritDoc} */
   @Override
+  public void beginWriteTransaction() throws LockFailedException, StaleWALException {
+    this.index.lock(WALLockType.EXCLUSIVE);
+
+    if (this.index.isStale()) {
+      // Another thread wrote to the WAL in the time between the shared lock and the exclusive lock
+      // were acquired. Unlock the read- and write locks and have the client retry.
+      this.index.unlock();
+      throw new StaleWALException(
+          "Cannot begin write transaction: WAL contents changed since read transaction started.");
+    }
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public void endWriteTransaction() {
+    this.index.unlock();
+  }
+
+  /** {@inheritDoc} */
+  @Override
   public void close() throws IOException {
-    try {
-      this.file.close();
-    } finally {
+    try (LuxorFile unused = this.file) { // use try-with-resources to close the file.
       this.index.close();
     }
   }

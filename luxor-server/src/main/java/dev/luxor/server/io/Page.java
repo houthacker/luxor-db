@@ -12,6 +12,7 @@ import java.nio.ByteBuffer;
  */
 public class Page {
 
+  /** The size of a page in bytes. */
   public static final int BYTES = 4096;
 
   /** The page data. */
@@ -19,7 +20,7 @@ public class Page {
 
   /** Creates a new, empty {@link Page}. */
   public Page() {
-    this.data = ByteBuffer.allocate(Page.BYTES);
+    this.data = ByteBuffer.allocate(BYTES);
   }
 
   /**

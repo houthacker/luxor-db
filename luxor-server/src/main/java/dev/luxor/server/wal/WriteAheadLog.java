@@ -1,10 +1,13 @@
 package dev.luxor.server.wal;
 
 import dev.luxor.server.concurrent.LockFailedException;
+import dev.luxor.server.concurrent.OutOfOrderLockException;
 import dev.luxor.server.io.CorruptPageException;
 import dev.luxor.server.io.NoSuchPageException;
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ConcurrentModificationException;
 
 /**
  * Interface for all {@code luxor} write-ahead-log (WAL) implementations.
@@ -82,7 +85,8 @@ import java.nio.ByteBuffer;
  *
  * @author houthacker
  */
-public interface WriteAheadLog extends AutoCloseable {
+@SuppressWarnings("PMD.CommentSize")
+public interface WriteAheadLog extends Closeable {
 
   /**
    * Reads the WAL header from the backing storage.
@@ -100,12 +104,13 @@ public interface WriteAheadLog extends AutoCloseable {
   /**
    * Begins a new read transaction. If the calling thread already is in a transaction (read or
    * write) at the time this method is called, this method has no additional effect and therefore
-   * uses the same database snapshot as the other transaction(s) created by the calling thread.
+   * uses the same database snapshot as the other running transaction(s) created by the calling
+   * thread.
    *
    * <p>On success this method acquires a read lock on the WAL.
    *
-   * @throws java.util.ConcurrentModificationException If a concurrent modification to the index
-   *     headers is detected while attempting to start the read transaction.
+   * @throws ConcurrentModificationException If a concurrent modification to the index headers is
+   *     detected while attempting to start the read transaction.
    * @throws LockFailedException If the associated shared lock cannot be acquired.
    */
   void beginReadTransaction() throws LockFailedException;
@@ -123,7 +128,7 @@ public interface WriteAheadLog extends AutoCloseable {
    * @param pageNumber The page number to search for.
    * @return The frame index.
    */
-  int frameIndexOf(final long pageNumber);
+  int frameIndexOf(long pageNumber);
 
   /**
    * Reads the page at {@code frameIndex}.
@@ -134,5 +139,33 @@ public interface WriteAheadLog extends AutoCloseable {
    * @throws IOException If an I/O error occurs while reading the page.
    * @throws NoSuchPageException If the file contains no frame with {@code frameIndex}.
    */
-  ByteBuffer pageAt(final int frameIndex) throws IOException, NoSuchPageException;
+  ByteBuffer pageAt(int frameIndex) throws IOException, NoSuchPageException;
+
+  /**
+   * Begins a new write transaction. A shared lock must already be held prior to this; this should
+   * be done by starting a read transaction first. If the calling thread already is in a write
+   * transaction at the time this method is called, this method has no additional effect and
+   * therefore uses the same database snapshot as the other running transaction(s) created by the
+   * calling thread.
+   *
+   * <p>If the WAL contents have changed since the related read transaction has started, the write
+   * transaction cannot begin. Clients should call {{@link #endReadTransaction()}} and retry.
+   *
+   * <p>On success this method acquires a write lock on the WAL.
+   *
+   * @throws ConcurrentModificationException If a concurrent modification to the index headers is
+   *     detected while attempting to start the read transaction.
+   * @throws StaleWALException If the WAL contents changed since the related read transaction was
+   *     started.
+   * @throws OutOfOrderLockException If the calling thread does not hold a shared lock prior to
+   *     calling this method.
+   * @throws LockFailedException If the associated exclusive lock cannot be acquired.
+   */
+  void beginWriteTransaction() throws LockFailedException, StaleWALException;
+
+  /**
+   * Releases the exclusive- and shared lock held by the calling thread, ending the transaction. If
+   * no transaction is running, this method has no effect.
+   */
+  void endWriteTransaction();
 }

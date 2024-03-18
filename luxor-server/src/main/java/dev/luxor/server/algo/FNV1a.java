@@ -65,12 +65,11 @@ public final class FNV1a {
    * @return This instance.
    */
   public FNV1a iterate(final int value) {
-    final byte[] bytes =
-        new byte[] {
-          (byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value
-        };
+    final byte[] bytes = {
+      (byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value
+    };
 
-    for (byte b : bytes) {
+    for (final byte b : bytes) {
       this.state *= FNV_PRIME;
       this.state ^= b;
     }
@@ -85,19 +84,18 @@ public final class FNV1a {
    * @return This instance.
    */
   public FNV1a iterate(final long value) {
-    final byte[] bytes =
-        new byte[] {
-          (byte) (value >>> 56),
-          (byte) (value >>> 48),
-          (byte) (value >>> 40),
-          (byte) (value >>> 32),
-          (byte) (value >>> 24),
-          (byte) (value >>> 16),
-          (byte) (value >>> 8),
-          (byte) value
-        };
+    final byte[] bytes = {
+      (byte) (value >>> 56),
+      (byte) (value >>> 48),
+      (byte) (value >>> 40),
+      (byte) (value >>> 32),
+      (byte) (value >>> 24),
+      (byte) (value >>> 16),
+      (byte) (value >>> 8),
+      (byte) value
+    };
 
-    for (byte b : bytes) {
+    for (final byte b : bytes) {
       this.state *= FNV_PRIME;
       this.state ^= b;
     }

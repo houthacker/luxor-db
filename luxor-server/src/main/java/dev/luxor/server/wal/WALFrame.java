@@ -11,10 +11,15 @@ import java.nio.ByteBuffer;
  *
  * @author houthacker
  */
-public class WALFrame {
+@SuppressWarnings(
+    "PMD.DataClass") // This could even be a record, but then we'd miss out of all the great
+// documentation.
+public final class WALFrame {
 
+  /** The byte size of a WAL frame header when serialized. */
   public static final int HEADER_BYTES = 32;
 
+  /** The byte size of a WAL frame when serialized. */
   public static final int BYTES = HEADER_BYTES + Page.BYTES;
 
   /** The page number of the page in the database. */
@@ -35,6 +40,17 @@ public class WALFrame {
   /** The page data. */
   private final ByteBuffer page;
 
+  /**
+   * Creates a new {@link WALFrame} with the given parameters.
+   *
+   * @param pageNumber The number of the page contained in the frame.
+   * @param commit {@code true} if this is a commit frame, {@code false} otherwise.
+   * @param randomSalt The random salt of the WAL at the time the frame was created.
+   * @param sequentialSalt The sequential salt of the WAL at the time the frame was created.
+   * @param checksum The cumulative checksum of all preceding frames including the current one being
+   *     created.
+   * @param page The page data.
+   */
   private WALFrame(
       final long pageNumber,
       final boolean commit,
@@ -118,24 +134,33 @@ public class WALFrame {
   }
 
   /** Builder for {@link WALFrame} instances. */
-  public static class Builder {
+  public static final class Builder {
 
-    // mask for builder fields, in order. The field 'commit' is considered to be set, because its
-    // default value for a frame is the same as a boolean default value (false).
+    /**
+     * mask for builder fields, in order. The field 'commit' is considered to be set, because its
+     * default value for a frame is the same as a boolean default value (false).
+     */
     private byte mask = 0x02;
 
+    /** The frame page number. */
     private long pageNumber;
 
+    /** Whether this is a commit frame; defaults to {@code false}. */
     private boolean commit;
 
+    /** The random salt. */
     private int randomSalt;
 
+    /** The sequential salt. */
     private int sequentialSalt;
 
+    /** The cumulative checksum. */
     private long checksum;
 
+    /** The page data. */
     private ByteBuffer page;
 
+    /** Creates a new {@link Builder} instance. */
     private Builder() {
       /* Only instantiate from containing class */
     }

@@ -15,14 +15,14 @@ class FileSerialTest {
 
     final FileSerial serial = FileSerial.find(temp);
     assertNotNull(serial, String.format("Expect an FileSerial to be found for path %s", temp));
-    assertEquals(serial.referenceCount(), 1, "Expect FileSerial to be referenced exactly once.");
+    assertEquals(1, serial.referenceCount(), "Expect FileSerial to be referenced exactly once.");
 
     final FileSerial same = FileSerial.find(temp);
-    assertEquals(serial.referenceCount(), 2, "Expect FileSerial to be referenced exactly twice.");
+    assertEquals(2, serial.referenceCount(), "Expect FileSerial to be referenced exactly twice.");
     assertSame(serial, same, "Expect same FileSerial for identical paths.");
 
     same.dereference();
     serial.dereference();
-    assertEquals(same.referenceCount(), 0, "Expect no more references to FileSerial.");
+    assertEquals(0, same.referenceCount(), "Expect no more references to FileSerial.");
   }
 }

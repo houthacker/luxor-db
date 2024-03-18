@@ -1,6 +1,7 @@
 package dev.luxor.server.wal;
 
 import dev.luxor.server.LuxorServerException;
+import java.io.Serial;
 
 /**
  * This exception is thrown when a {@link WriteAheadLog} is being read from disk and it cannot be
@@ -9,6 +10,8 @@ import dev.luxor.server.LuxorServerException;
  * @author houthacker
  */
 public class CorruptWALException extends LuxorServerException {
+
+  @Serial private static final long serialVersionUID = -775400053018694628L;
 
   /** Creates a new {@link CorruptWALException}. */
   public CorruptWALException() {

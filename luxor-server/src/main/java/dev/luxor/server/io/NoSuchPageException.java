@@ -1,6 +1,7 @@
 package dev.luxor.server.io;
 
 import dev.luxor.server.LuxorServerException;
+import java.io.Serial;
 
 /**
  * An exception indicating that a page was requested, but that page doesn't exist.
@@ -8,6 +9,8 @@ import dev.luxor.server.LuxorServerException;
  * @author houthacker
  */
 public class NoSuchPageException extends LuxorServerException {
+
+  @Serial private static final long serialVersionUID = 8775546837674228871L;
 
   /** Creates a new {@link NoSuchPageException}. */
   public NoSuchPageException() {
