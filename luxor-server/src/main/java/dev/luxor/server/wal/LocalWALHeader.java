@@ -100,6 +100,8 @@ public final class LocalWALHeader implements WALHeader {
    *
    * @return The new {@link LocalWALHeader}.
    */
+  @SuppressWarnings(
+      "java:S2245") // the RNG isn't used in a cryptographically sensitive context here.
   public static LocalWALHeader createDefault() {
     return new LocalWALHeader(
         MAGIC, 0L, 0, ThreadLocalRandom.current().nextInt(), ThreadLocalRandom.current().nextInt());
