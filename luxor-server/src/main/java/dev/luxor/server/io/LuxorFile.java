@@ -1,5 +1,6 @@
 package dev.luxor.server.io;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -59,7 +60,8 @@ import org.slf4j.LoggerFactory;
  *
  * @author houthacker
  */
-public final class LuxorFile implements AutoCloseable {
+@SuppressWarnings({"PMD.CommentSize", "PMD.TooManyMethods"})
+public final class LuxorFile implements Closeable {
 
   private static final Logger log = LoggerFactory.getLogger(LuxorFile.class);
 

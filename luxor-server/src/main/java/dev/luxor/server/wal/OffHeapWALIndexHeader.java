@@ -1,10 +1,10 @@
 package dev.luxor.server.wal;
 
 import static java.lang.foreign.ValueLayout.JAVA_SHORT;
+import static java.util.Objects.requireNonNull;
 
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
-import java.lang.invoke.VarHandle;
 import java.util.Objects;
 
 /**
@@ -14,14 +14,16 @@ import java.util.Objects;
  */
 public class OffHeapWALIndexHeader implements WALIndexHeader {
 
-  private static final String LAST_VALID_FRAME_NAME = "last_valid_frame";
+  /** The name of the 'last_valid_frame' field in a wal_index_header struct. */
+  private static final String LAST_VALID_FRAME_NAME = "last_valid_frame"; // NOPMD (LongVariable)
+
+  /** The layout of a wal_index_header struct in off-heap memory. */
   public static final MemoryLayout LAYOUT =
-      MemoryLayout.structLayout(JAVA_SHORT.withName(LAST_VALID_FRAME_NAME));
-  private static final VarHandle last_valid_frame =
-      LAYOUT.varHandle(MemoryLayout.PathElement.groupElement(LAST_VALID_FRAME_NAME));
+      MemoryLayout.structLayout(JAVA_SHORT.withName(LAST_VALID_FRAME_NAME))
+          .withName("wal_index_header");
 
   /** The last valid frame within the WAL. */
-  private short lastValidFrame;
+  private final short lastValidFrame;
 
   /**
    * Creates a new {@link OffHeapWALIndexHeader} that contains a copy of the data in the provided
@@ -30,7 +32,11 @@ public class OffHeapWALIndexHeader implements WALIndexHeader {
    * @param segment The segment of memory the data is stored in.
    */
   public OffHeapWALIndexHeader(final MemorySegment segment) {
-    this.lastValidFrame = (short) last_valid_frame.get(segment);
+    this.lastValidFrame =
+        requireNonNull(segment, "segment must be non-null.")
+            .get(
+                JAVA_SHORT,
+                LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(LAST_VALID_FRAME_NAME)));
   }
 
   /** {@inheritDoc} */
@@ -39,8 +45,9 @@ public class OffHeapWALIndexHeader implements WALIndexHeader {
     return this.lastValidFrame;
   }
 
+  /** {@inheritDoc} */
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(final Object o) {
     if (this == o) {
       return true;
     }
@@ -52,6 +59,7 @@ public class OffHeapWALIndexHeader implements WALIndexHeader {
     return lastValidFrame == that.lastValidFrame;
   }
 
+  /** {@inheritDoc} */
   @Override
   public int hashCode() {
     return Objects.hash(lastValidFrame);

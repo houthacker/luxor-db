@@ -4,6 +4,7 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
 import dev.luxor.server.concurrent.Locks;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -142,8 +143,10 @@ public final class FileSerial {
   public void dereference() {
     // If decreasing the reference count yields zero, remove the FileSerial from the linked list.
     if (this.referenceCount() > 0 && this.refCount.decrementAndGet() == 0) {
-      log.trace(
-          "FileSerial {} has no more references; removing it from the linked list.", this.key);
+      if (log.isTraceEnabled()) {
+        log.trace(
+            "FileSerial {} has no more references; removing it from the linked list.", this.key);
+      }
 
       // Removing the serial is a structural change, acquire the write lock.
       GLOBAL_SERIAL_GUARD.writeLock().lock();
@@ -195,6 +198,9 @@ public final class FileSerial {
    *     itself, but rather to coordinate accesses to any related {@link LuxorFile}s.
    * @return The mutex lock.
    */
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "The mutex must be exposed to let LuxorFiles synchronize on a shared mutex.")
   public ReentrantReadWriteLock mutex() {
     return this.mutex;
   }

@@ -4,7 +4,9 @@ import static dev.luxor.server.shared.Ensure.ensureAtLeastZero;
 import static java.util.Objects.requireNonNull;
 
 import dev.luxor.server.concurrent.LockFailedException;
+import dev.luxor.server.concurrent.OutOfOrderLockException;
 import dev.luxor.server.io.LuxorFile;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
@@ -17,12 +19,17 @@ import org.slf4j.LoggerFactory;
 /**
  * The {@link OffHeapWALIndex} stores its data off-heap in a memory-mapped file.
  *
+ * @implNote The constructor of this class throws an exception, which makes it vulnerable to
+ *     finalizer attacks. To mitigate that, this class is made final. If the need to extend this
+ *     class arises, it is obviously required to find another mitigation.
  * @author houthacker
  */
-public class OffHeapWALIndex implements WALIndex {
+@SuppressWarnings("PMD.TooManyMethods") // TODO maybe later extract all locking-related methods?
+public final class OffHeapWALIndex implements WALIndex {
 
   private static final Logger log = LoggerFactory.getLogger(OffHeapWALIndex.class);
 
+  /** The layout of two consecutive wal_index_header structs. */
   private static final MemoryLayout HEADERS_LAYOUT =
       MemoryLayout.sequenceLayout(2, OffHeapWALIndexHeader.LAYOUT);
 
@@ -34,6 +41,7 @@ public class OffHeapWALIndex implements WALIndex {
   /** The amount of lock types. Each lock type has its own lock byte in the backing file. */
   private static final int FILE_LOCK_COUNT = 8;
 
+  /** The layout of a wal_index struct in off-heap memory. */
   private static final MemoryLayout LAYOUT =
       MemoryLayout.structLayout(
               HEADERS_LAYOUT.withName("header"),
@@ -76,18 +84,22 @@ public class OffHeapWALIndex implements WALIndex {
    * @param file The backing file of this WAL index.
    * @throws ConcurrentModificationException If the WAL index is modified while reading it from
    *     shared memory.
+   * @throws IOException If memory mapping any of the required file regions fails.
    */
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "It makes no sense to copy or clone the mutable LuxorFile.")
   public OffHeapWALIndex(final LuxorFile file) throws IOException {
     this.memory =
         requireNonNull(file, "Cannot create OffHeapWALIndex: backing file must be non-null.")
             .mapShared(0L, LAYOUT.byteSize());
 
-    final OffHeapWALIndexHeader[] h = loadHeaders(memory);
-    if (h[0].equals(h[1])) {
+    final OffHeapWALIndexHeader[] fromSharedMemory = loadHeaders(memory);
+    if (fromSharedMemory[0].equals(fromSharedMemory[1])) {
       this.locks = WALLockType.NONE.mask();
       this.fileLocks = new FileLock[FILE_LOCK_COUNT];
       this.file = file;
-      this.headers = h;
+      this.headers = fromSharedMemory;
       this.table = new OffHeapHashSet(file, LAYOUT.byteSize());
     } else {
       throw new ConcurrentModificationException(
@@ -159,7 +171,8 @@ public class OffHeapWALIndex implements WALIndex {
             e);
       }
 
-      this.fileLocks[position] = null;
+      this.fileLocks[position] =
+          null; // NOPMD (NullAssignment) undesirable fix is to use an ArrayList.
       this.file.mutex().readLock().unlock();
       this.locks ^= WALLockType.SHARED.mask();
     }
@@ -173,13 +186,14 @@ public class OffHeapWALIndex implements WALIndex {
   private void lockExclusive() throws LockFailedException {
     if (!this.hasLock(WALLockType.EXCLUSIVE)) {
 
-      // To acquire an exclusive lock, a shared lock must also be held, because a shared lock
-      // prevents
-      // a checkpoint from being executed.
-      // To support lock upgrades (a read transaction might become a write transaction), if no
-      // shared
-      // lock is held at this time, one will be acquired.
-      this.lock(WALLockType.SHARED);
+      // To acquire an exclusive lock, a shared lock must also be held, because of three reasons:
+      // 1. Before database rows can be updated, they must be read first.
+      // 2. Unlike an exclusive lock, a shared lock prevents a checkpoint from being executed.
+      // 3. The reason explained at the OutOfOrderLockException class documentation.
+      if (!this.hasLock(WALLockType.SHARED)) {
+        throw new OutOfOrderLockException(
+            "Out of order locking: an exclusive lock is requested, but no shared lock is currently held.");
+      }
 
       this.file.lock().lock();
       try {
@@ -202,11 +216,12 @@ public class OffHeapWALIndex implements WALIndex {
         this.fileLocks[position].release();
       } catch (IOException e) {
         log.warn(
-            "Could not unlock shared WAL index file lock, but must proceed as if it were unlocked.",
+            "Could not unlock exclusive WAL index file lock, but must proceed as if it were unlocked.",
             e);
       }
 
-      this.fileLocks[position] = null;
+      this.fileLocks[position] =
+          null; // NOPMD (NullAssignment) undesirable fix is to use an ArrayList.
       this.file.lock().unlock();
       this.locks ^= WALLockType.EXCLUSIVE.mask();
     }
@@ -220,13 +235,13 @@ public class OffHeapWALIndex implements WALIndex {
 
   /** {@inheritDoc} */
   @Override
-  public boolean isCurrent() {
+  public boolean isStale() {
     // Try to reload any pending changes into the off-heap memory segment.
     this.memory.load();
 
-    final OffHeapWALIndexHeader[] h = loadHeaders(this.memory);
-    if (h[0].equals(h[1])) {
-      return !this.headers[0].equals(h[0]);
+    final OffHeapWALIndexHeader[] shmHeaders = loadHeaders(this.memory);
+    if (shmHeaders[0].equals(shmHeaders[1])) {
+      return !this.headers[0].equals(shmHeaders[0]);
     } else {
 
       throw new ConcurrentModificationException(
@@ -244,6 +259,20 @@ public class OffHeapWALIndex implements WALIndex {
   @Override
   public void put(final int frame, final long page) throws IOException {
     this.table.put(ensureAtLeastZero(frame), ensureAtLeastZero(page));
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public WALLockType currentLock() {
+    WALLockType currentLockType = WALLockType.NONE;
+
+    if (this.hasLock(WALLockType.EXCLUSIVE)) {
+      currentLockType = WALLockType.EXCLUSIVE;
+    } else if (this.hasLock(WALLockType.SHARED)) {
+      currentLockType = WALLockType.SHARED;
+    }
+
+    return currentLockType;
   }
 
   /** {@inheritDoc} */
@@ -270,10 +299,7 @@ public class OffHeapWALIndex implements WALIndex {
       // If we're locked (as indicated by this.locks), then the shared lock is always held.
       // If the exclusive lock is held as well, unlock that first, since otherwise a checkpoint may
       // start before the exclusive lock has been released.
-      if (this.hasLock(WALLockType.EXCLUSIVE)) {
-        this.unlockExclusive();
-      }
-
+      this.unlockExclusive();
       this.unlockShared();
     }
   }

@@ -5,7 +5,7 @@ package dev.luxor.server.shared;
  *
  * @author houthacker
  */
-public class Ensure {
+public final class Ensure {
 
   private Ensure() {
     throw new UnsupportedOperationException(

@@ -14,7 +14,7 @@ public interface WALIndexTable {
    * @param frame The frame number the page resides in.
    * @param page The page number to map.
    */
-  void put(final int frame, final long page);
+  void put(int frame, long page);
 
   /**
    * Finds the number of the frame containing {@code page}.
@@ -22,7 +22,7 @@ public interface WALIndexTable {
    * @param page The page number to retrieve.
    * @return The frame index, or {@code -1} if no such frame exists.
    */
-  int keyOf(final long page);
+  int keyOf(long page);
 
   /**
    * Returns the amount of elements contained in this table.

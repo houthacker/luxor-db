@@ -1,6 +1,7 @@
 package dev.luxor.server.io;
 
 import java.io.IOException;
+import java.io.Serial;
 
 /**
  * This exception is thrown in two cases.
@@ -13,6 +14,8 @@ import java.io.IOException;
  * @author houthacker
  */
 public class CorruptPageException extends IOException {
+
+  @Serial private static final long serialVersionUID = 7007382169633109458L;
 
   /** Creates a new {@link CorruptPageException} with no detail message. */
   public CorruptPageException() {

@@ -13,21 +13,30 @@ import java.util.concurrent.ThreadLocalRandom;
  *
  * @author houthacker
  */
-public class LocalWALHeader implements WALHeader {
+public final class LocalWALHeader implements WALHeader {
 
   /** The byte size of a serialized {@link LocalWALHeader}. */
   public static final int BYTES = 32;
 
+  /**
+   * The header magic can be used to assess the validity of the header. Although this method is
+   * quicker, it is also less precise than validating the checksum.
+   */
   private final int magic;
 
+  /** The database size in pages at the time this header was copied to on-heap memory. */
   private final long dbSize;
 
+  /** The amount of successfully executed checkpoints. */
   private final int checkpointSequence;
 
+  /** The random salt. */
   private final int randomSalt;
 
+  /** The sequential salt. */
   private final int sequentialSalt;
 
+  /** The FNV1a checksum of the first 24 bytes of the header. */
   private final long checksum;
 
   /**
@@ -93,11 +102,7 @@ public class LocalWALHeader implements WALHeader {
    */
   public static LocalWALHeader createDefault() {
     return new LocalWALHeader(
-        WALHeader.MAGIC,
-        0L,
-        0,
-        ThreadLocalRandom.current().nextInt(),
-        ThreadLocalRandom.current().nextInt());
+        MAGIC, 0L, 0, ThreadLocalRandom.current().nextInt(), ThreadLocalRandom.current().nextInt());
   }
 
   /**
@@ -113,9 +118,9 @@ public class LocalWALHeader implements WALHeader {
       throws IOException, CorruptWALException {
     requireNonNull(wal, "wal must be non-null.");
 
-    final ByteBuffer data = ByteBuffer.allocate(LocalWALHeader.BYTES);
+    final ByteBuffer data = ByteBuffer.allocate(BYTES);
     final int bytesRead = wal.read(data, 0L);
-    if (bytesRead == LocalWALHeader.BYTES) {
+    if (bytesRead == BYTES) {
       data.rewind();
 
       final LocalWALHeader header =
@@ -137,8 +142,7 @@ public class LocalWALHeader implements WALHeader {
 
     // Corrupt WAL
     throw new CorruptWALException(
-        String.format(
-            "Could only read %d/%d bytes of the WAL header.", bytesRead, LocalWALHeader.BYTES));
+        String.format("Could only read %d/%d bytes of the WAL header.", bytesRead, BYTES));
   }
 
   /** {@inheritDoc} */
@@ -180,7 +184,7 @@ public class LocalWALHeader implements WALHeader {
   /** {@inheritDoc} */
   @Override
   public ByteBuffer asByteBuffer() {
-    return ByteBuffer.allocate(LocalWALHeader.BYTES)
+    return ByteBuffer.allocate(BYTES)
         .putInt(this.magic)
         .putLong(this.dbSize)
         .putInt(this.checkpointSequence)

@@ -1,6 +1,8 @@
 package dev.luxor.server.wal;
 
 import dev.luxor.server.concurrent.LockFailedException;
+import dev.luxor.server.concurrent.OutOfOrderLockException;
+import java.io.Closeable;
 import java.io.IOException;
 
 /**
@@ -9,7 +11,7 @@ import java.io.IOException;
  *
  * @author houthacker
  */
-public interface WALIndex extends AutoCloseable {
+public interface WALIndex extends Closeable {
 
   /**
    * Returns the header of this index.
@@ -19,15 +21,15 @@ public interface WALIndex extends AutoCloseable {
   WALIndexHeader header();
 
   /**
-   * Returns whether this {@link WALIndex} is current as compared to its main storage in mapped
+   * Returns whether this {@link WALIndex} is outdated as compared to its main storage in mapped
    * memory. If the implementation does not use secondary storage, this method always returns {@code
-   * true}.
+   * false}.
    *
-   * @return Whether this {@link WALIndex} is up-to-date.
+   * @return Whether this {@link WALIndex} is outdated.
    * @throws java.util.ConcurrentModificationException If a concurrent modification of the headers
    *     is detected.
    */
-  boolean isCurrent();
+  boolean isStale();
 
   /**
    * Finds the frame that contains {@code page}.
@@ -36,7 +38,7 @@ public interface WALIndex extends AutoCloseable {
    * @return The number of the frame containing the given page, or {@code -1} if no such frame
    *     exists.
    */
-  int findFrame(final long page);
+  int findFrame(long page);
 
   /**
    * Maps {@code page} to {@code frame} so it can be searched for later.
@@ -45,21 +47,31 @@ public interface WALIndex extends AutoCloseable {
    * @param page The page number to map.
    * @throws IOException If an I/O error occurs while storing the page mapping.
    */
-  void put(final int frame, final long page) throws IOException;
+  void put(int frame, long page) throws IOException;
 
   /**
-   * Acquires a lock of {@code type} on this index. These locks will control concurrency within the
-   * JVM as well as between processes competing for conflicting locks.
+   * Returns the most restrictive lock currently held by this {@link WALIndex}.
    *
-   * <p>If an exclusive lock is requested, a shared lock is also acquired if none is held yet.
+   * @return The current lock type.
+   */
+  WALLockType currentLock();
+
+  /**
+   * Acquires a lock of {@code type} on this index. These locks control concurrency within the JVM
+   * as well as between competing processes.
+   *
+   * <p>A shared lock must be held prior to requesting an exclusive lock.
    *
    * <p>If a lock of {@code type} is already held by the calling thread, this method will have no
    * (additional) effect.
    *
    * @param type The lock type to acquire.
+   * @throws OutOfOrderLockException If an exclusive lock is requested, but no shared lock is
+   *     currently held.
    * @throws LockFailedException If the requested lock cannot be obtained.
+   * @see OutOfOrderLockException
    */
-  void lock(final WALLockType type) throws LockFailedException;
+  void lock(WALLockType type) throws LockFailedException;
 
   /** Releases any locks currently held. If no lock is currently held, this method has no effect. */
   void unlock();

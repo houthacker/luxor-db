@@ -1,15 +1,22 @@
 package dev.luxor.server.wal;
 
-import dev.luxor.server.LuxorServerRuntimeException;
+import dev.luxor.server.LuxorServerException;
+import java.io.Serial;
 
 /**
- * This exception is thrown to indicate a write-ahead-log is discovered, but it is a leftover from a
- * previous system failure. Since there is currently no way to recover from this (WAL recovery is
- * not implemented yet), this exception is unchecked.
+ * This exception is thrown when a write transaction is initiated and changes to the WAL are
+ * detected since its related read transaction started.
+ *
+ * <p>Additionally, this exception is thrown to indicate a write-ahead-log is discovered, but it is
+ * a leftover from a previous system failure. Since there is currently no way to recover from this
+ * (we don't yet have WAL recovery), this exception should be wrapped within a checked exception in
+ * this case.
  *
  * @author houthacker
  */
-public class StaleWALException extends LuxorServerRuntimeException {
+public class StaleWALException extends LuxorServerException {
+
+  @Serial private static final long serialVersionUID = 3988296113702797291L;
 
   /** Creates a new {@link StaleWALException} with no detail message. */
   public StaleWALException() {
