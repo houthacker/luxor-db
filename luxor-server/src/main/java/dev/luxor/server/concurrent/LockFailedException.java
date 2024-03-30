@@ -1,14 +1,13 @@
 package dev.luxor.server.concurrent;
 
-import dev.luxor.server.LuxorServerException;
 import java.io.Serial;
 
 /**
- * This exception is thrown when a lock cannot be acquired.
+ * This exception is thrown when a lock cannot be obtained.
  *
  * @author houthacker
  */
-public class LockFailedException extends LuxorServerException {
+public class LockFailedException extends Exception {
 
   @Serial private static final long serialVersionUID = 19127552004989615L;
 

@@ -1,6 +1,5 @@
 package dev.luxor.server.io;
 
-import dev.luxor.server.LuxorServerException;
 import java.io.Serial;
 
 /**
@@ -8,7 +7,7 @@ import java.io.Serial;
  *
  * @author houthacker
  */
-public class NoSuchPageException extends LuxorServerException {
+public class NoSuchPageException extends Exception {
 
   @Serial private static final long serialVersionUID = 8775546837674228871L;
 

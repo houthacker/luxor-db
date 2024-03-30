@@ -1,6 +1,5 @@
 package dev.luxor.server.wal;
 
-import dev.luxor.server.LuxorServerException;
 import java.io.Serial;
 
 /**
@@ -9,7 +8,7 @@ import java.io.Serial;
  *
  * @author houthacker
  */
-public class CorruptWALException extends LuxorServerException {
+public class CorruptWALException extends Exception {
 
   @Serial private static final long serialVersionUID = -775400053018694628L;
 

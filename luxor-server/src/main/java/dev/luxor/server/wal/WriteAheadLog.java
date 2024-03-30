@@ -4,6 +4,8 @@ import dev.luxor.server.concurrent.LockFailedException;
 import dev.luxor.server.concurrent.OutOfOrderLockException;
 import dev.luxor.server.io.CorruptPageException;
 import dev.luxor.server.io.NoSuchPageException;
+import dev.luxor.server.io.Page;
+import dev.luxor.server.wal.local.LocalWAL;
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -107,11 +109,11 @@ public interface WriteAheadLog extends Closeable {
    * uses the same database snapshot as the other running transaction(s) created by the calling
    * thread.
    *
-   * <p>On success this method acquires a read lock on the WAL.
+   * <p>On success this method obtains a read lock on the WAL.
    *
    * @throws ConcurrentModificationException If a concurrent modification to the index headers is
    *     detected while attempting to start the read transaction.
-   * @throws LockFailedException If the associated shared lock cannot be acquired.
+   * @throws LockFailedException If the associated shared lock cannot be obtained.
    */
   void beginReadTransaction() throws LockFailedException;
 
@@ -134,7 +136,7 @@ public interface WriteAheadLog extends Closeable {
    * Reads the page at {@code frameIndex}.
    *
    * @param frameIndex The frame index to read.
-   * @return A {@link ByteBuffer} containing the page content.
+   * @return A {@link Page} containing the page content.
    * @throws CorruptPageException If the page cannot be read completely.
    * @throws IOException If an I/O error occurs while reading the page.
    * @throws NoSuchPageException If the file contains no frame with {@code frameIndex}.
@@ -151,7 +153,7 @@ public interface WriteAheadLog extends Closeable {
    * <p>If the WAL contents have changed since the related read transaction has started, the write
    * transaction cannot begin. Clients should call {{@link #endReadTransaction()}} and retry.
    *
-   * <p>On success this method acquires a write lock on the WAL.
+   * <p>On success this method obtains a write lock on the WAL.
    *
    * @throws ConcurrentModificationException If a concurrent modification to the index headers is
    *     detected while attempting to start the read transaction.
@@ -159,7 +161,7 @@ public interface WriteAheadLog extends Closeable {
    *     started.
    * @throws OutOfOrderLockException If the calling thread does not hold a shared lock prior to
    *     calling this method.
-   * @throws LockFailedException If the associated exclusive lock cannot be acquired.
+   * @throws LockFailedException If the associated exclusive lock cannot be obtained.
    */
   void beginWriteTransaction() throws LockFailedException, StaleWALException;
 
@@ -168,4 +170,16 @@ public interface WriteAheadLog extends Closeable {
    * no transaction is running, this method has no effect.
    */
   void endWriteTransaction();
+
+  /**
+   * Writes the given page to the WAL.
+   *
+   * @param page The page to write.
+   * @param commit {@code true} if this is a commit record, {@code false} otherwise.
+   * @throws WALWriteException If writing to the WAL fails in a manner which cannot be recovered
+   *     from.
+   * @throws TransientWALWriteException If writing to the WAL fails and clients are encouraged to
+   *     retry the write operation.
+   */
+  void writePage(Page page, boolean commit) throws TransientWALWriteException;
 }

@@ -14,12 +14,12 @@ public final class Locks {
   }
 
   /**
-   * Acquires exclusive ownership of all given locks while avoiding deadlocks. After this method has
+   * Obtains exclusive ownership of all given locks while avoiding deadlocks. After this method has
    * been executed, either all or no locks are owned by the calling thread.<br>
    * This method blocks until all locks have been obtained.
    *
    * @implNote This implementation is the Java-analog of C++'s {@code std::lock} implementation.
-   * @param locks The list of locks of which to acquire exclusive ownership.
+   * @param locks The list of locks of which to obtain exclusive ownership.
    */
   public static void exclusiveLock(final ReentrantReadWriteLock... locks) {
     if (locks.length == 0) {

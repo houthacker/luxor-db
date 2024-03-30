@@ -14,6 +14,7 @@ import java.nio.channels.FileLockInterruptionException;
 import java.nio.channels.NonReadableChannelException;
 import java.nio.channels.NonWritableChannelException;
 import java.nio.channels.OverlappingFileLockException;
+import java.nio.file.Files;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -65,6 +66,9 @@ public final class LuxorFile implements Closeable {
 
   private static final Logger log = LoggerFactory.getLogger(LuxorFile.class);
 
+  /** The arena for controlling the life cycle of memory mapped {@link LuxorFile} regions. */
+  private static final Arena LUXOR_FILE_ARENA = Arena.ofShared();
+
   /** The arena that manages the life cycle of mapped {@link MemorySegment}s. */
   private final Arena arena;
 
@@ -103,7 +107,17 @@ public final class LuxorFile implements Closeable {
   public static LuxorFile open(final Path path, final OpenOption... options) throws IOException {
     final Path absolutePath = path.toAbsolutePath();
     return new LuxorFile(
-        Arena.ofShared(), absolutePath, options, FileChannel.open(absolutePath, options));
+        LUXOR_FILE_ARENA, absolutePath, options, FileChannel.open(absolutePath, options));
+  }
+
+  /**
+   * Returns the size of this file, in bytes.
+   *
+   * @return The size of this file.
+   * @throws IOException If an I/O error occurs while trying to determine the file size.
+   */
+  public long size() throws IOException {
+    return Files.size(this.path);
   }
 
   /**
@@ -249,7 +263,7 @@ public final class LuxorFile implements Closeable {
   }
 
   /**
-   * Acquires a lock on the given region of this file. An extended description of the implementation
+   * Obtains a lock on the given region of this file. An extended description of the implementation
    * can be found at {@link FileChannel#lock(long, long, boolean)}. This lock synchronizes with
    * {@link LuxorFile#tryLock(long, long, boolean)}, but not with {@link LuxorFile#mutex()} and
    * {@link LuxorFile#lock()}.
@@ -262,7 +276,7 @@ public final class LuxorFile implements Closeable {
    * @param shared {@code true} to request a shared lock, in which case this file must be open for
    *     reading (and possibly writing); {@code false} to request an exclusive lock, in which case
    *     this file must be open for writing (and possibly reading).
-   * @return A lock object representing the newly-acquired lock.
+   * @return A lock object representing the newly-obtained lock.
    * @throws IllegalArgumentException If the preconditions on the parameters do not hold.
    * @throws ClosedChannelException If the underlying {@link FileChannel} is closed.
    * @throws AsynchronousCloseException If another thread closes this channel while the invoking
@@ -285,7 +299,7 @@ public final class LuxorFile implements Closeable {
   }
 
   /**
-   * Attempts to acquire a lock on the given region of this file. If the lock cannot be acquired,
+   * Attempts to obtain a lock on the given region of this file. If the lock cannot be obtained,
    * this method returns immediately. An extended description of the implementation can be found at
    * {@link FileChannel#tryLock(long, long, boolean)}. This lock synchronizes with {@link
    * LuxorFile#lock(long, long, boolean)}, but not with {@link LuxorFile#mutex()} and {@link
@@ -298,8 +312,8 @@ public final class LuxorFile implements Closeable {
    *     extended or truncated.
    * @param shared {@code true} to request a shared lock, {@code false} to request an exclusive
    *     lock.
-   * @return A lock object representing the newly-acquired lock, or {@code null} if the lock could
-   *     not be acquired because another program holds an overlapping lock.
+   * @return A lock object representing the newly-obtained lock, or {@code null} if the lock could
+   *     not be obtained because another program holds an overlapping lock.
    * @throws IllegalArgumentException If the preconditions on the parameters do not hold.
    * @throws ClosedChannelException If the underlying {@link FileChannel} is closed.
    * @throws OverlappingFileLockException If a lock that overlaps the requested region is already

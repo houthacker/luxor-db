@@ -61,6 +61,19 @@ public final class FNV1a {
   /**
    * Appends {@code value} to the current hash state.
    *
+   * @param value The boolean value to hash.
+   * @return This instance.
+   */
+  public FNV1a iterate(final boolean value) {
+    this.state *= FNV_PRIME;
+    this.state ^= Boolean.hashCode(value);
+
+    return this;
+  }
+
+  /**
+   * Appends {@code value} to the current hash state.
+   *
    * @param value The integer value to hash.
    * @return This instance.
    */

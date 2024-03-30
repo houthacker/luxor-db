@@ -41,7 +41,7 @@
 
     <rule ref="category/java/codestyle.xml/OnlyOneReturn">
         <properties>
-            <property name="violationSuppressXPath" value="//MethodDeclaration[@Image='equals' or @Image='hashCode']"/>
+            <property name="violationSuppressXPath" value="//MethodDeclaration[@Name='equals' or @Name='hashCode']"/>
         </properties>
     </rule>
 
@@ -53,7 +53,7 @@
 
     <rule ref="category/java/codestyle.xml/ShortVariable">
         <properties>
-            <property name="violationSuppressXPath" value="//MethodDeclaration[@Image='equals' or @Image='hashCode']"/>
+            <property name="violationSuppressXPath" value="//MethodDeclaration[@Name='equals' or @Name='hashCode']"/>
         </properties>
     </rule>
 
@@ -67,7 +67,7 @@
 
     <rule ref="category/java/documentation.xml/CommentRequired">
         <properties>
-            <property name="violationSuppressXPath" value="//FieldDeclaration//VariableDeclaratorId[@Name='log']"/>
+            <property name="violationSuppressXPath" value="//FieldDeclaration//VariableId[@Name='log']"/>
         </properties>
     </rule>
 

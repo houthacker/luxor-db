@@ -1,6 +1,6 @@
 package dev.luxor.server.wal;
 
-import dev.luxor.server.LuxorServerRuntimeException;
+import dev.luxor.server.wal.local.OffHeapHashSet;
 import java.io.Serial;
 
 /**
@@ -8,7 +8,7 @@ import java.io.Serial;
  *
  * @author houthacker
  */
-public class RecursiveGrowException extends LuxorServerRuntimeException {
+public class RecursiveGrowException extends RuntimeException {
 
   @Serial private static final long serialVersionUID = -7486596236803581804L;
 

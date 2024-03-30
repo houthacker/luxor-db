@@ -3,6 +3,7 @@ package dev.luxor.server.wal;
 import static dev.luxor.server.shared.Ensure.ensureAtLeastOne;
 import static java.util.Objects.requireNonNull;
 
+import dev.luxor.server.algo.FNV1a;
 import dev.luxor.server.io.Page;
 import java.nio.ByteBuffer;
 
@@ -23,7 +24,7 @@ public final class WALFrame {
   public static final int BYTES = HEADER_BYTES + Page.BYTES;
 
   /** The page number of the page in the database. */
-  private final long pageNumber;
+  private final long pageIndex;
 
   /** Whether this is a commit frame. */
   private final boolean commit;
@@ -43,7 +44,7 @@ public final class WALFrame {
   /**
    * Creates a new {@link WALFrame} with the given parameters.
    *
-   * @param pageNumber The number of the page contained in the frame.
+   * @param pageIndex The index of the page contained in the frame.
    * @param commit {@code true} if this is a commit frame, {@code false} otherwise.
    * @param randomSalt The random salt of the WAL at the time the frame was created.
    * @param sequentialSalt The sequential salt of the WAL at the time the frame was created.
@@ -52,7 +53,7 @@ public final class WALFrame {
    * @param page The page data.
    */
   private WALFrame(
-      final long pageNumber,
+      final long pageIndex,
       final boolean commit,
       final int randomSalt,
       final int sequentialSalt,
@@ -62,7 +63,7 @@ public final class WALFrame {
       throw new IllegalArgumentException("page must contain exactly Page.BYTES.");
     }
 
-    this.pageNumber = ensureAtLeastOne(pageNumber);
+    this.pageIndex = ensureAtLeastOne(pageIndex);
     this.commit = commit;
     this.randomSalt = randomSalt;
     this.sequentialSalt = sequentialSalt;
@@ -80,12 +81,12 @@ public final class WALFrame {
   }
 
   /**
-   * The page number of the contained page.
+   * The index of the contained page.
    *
-   * @return The page number.
+   * @return The page index.
    */
-  public long pageNumber() {
-    return this.pageNumber;
+  public long pageIndex() {
+    return this.pageIndex;
   }
 
   /**
@@ -133,6 +134,21 @@ public final class WALFrame {
     return this.page.rewind().asReadOnlyBuffer();
   }
 
+  /**
+   * Creates a new {@link ByteBuffer} containing the frame header.
+   *
+   * @return The frame header as a byte buffer.
+   */
+  public ByteBuffer header() {
+    return ByteBuffer.allocate(HEADER_BYTES)
+        .putLong(this.pageIndex)
+        .put(this.commit ? (byte) 1 : 0)
+        .putInt(this.randomSalt)
+        .putInt(this.sequentialSalt)
+        .putLong(this.checksum)
+        .rewind();
+  }
+
   /** Builder for {@link WALFrame} instances. */
   public static final class Builder {
 
@@ -142,8 +158,8 @@ public final class WALFrame {
      */
     private byte mask = 0x02;
 
-    /** The frame page number. */
-    private long pageNumber;
+    /** The frame page index. */
+    private long pageIndex;
 
     /** Whether this is a commit frame; defaults to {@code false}. */
     private boolean commit;
@@ -169,11 +185,11 @@ public final class WALFrame {
      * Sets the number of the page contained in the {@link WALFrame}. Must be {@code >= 1}. This
      * field is required.
      *
-     * @param pageNumber The page number to set.
+     * @param pageIndex The page number to set.
      * @return This {@link Builder} instance.
      */
-    public Builder pageNumber(final long pageNumber) {
-      this.pageNumber = ensureAtLeastOne(pageNumber);
+    public Builder pageIndex(final long pageIndex) {
+      this.pageIndex = ensureAtLeastOne(pageIndex);
       this.mask |= 0x01;
 
       return this;
@@ -235,6 +251,43 @@ public final class WALFrame {
     }
 
     /**
+     * Calculates the checksum for this frame using {@code previousChecksum} as the initial checksum
+     * state.
+     *
+     * @param previousChecksum The cumulative checksum of the preceding frame.
+     * @return This {@link Builder} instance.
+     */
+    public Builder calculateChecksum(final long previousChecksum) {
+      return this.checksum(
+          new FNV1a(previousChecksum)
+              .iterate(this.pageIndex)
+              .iterate(this.commit)
+              .iterate(this.randomSalt)
+              .iterate(this.sequentialSalt)
+              .iterate(this.page, 0, this.page.limit())
+              .state());
+    }
+
+    /**
+     * Reads the {@link WALFrame} header fields from {@code header}.
+     *
+     * @param header The {@link ByteBuffer} containing the header field values.
+     * @return This {@link Builder} instance.
+     */
+    public Builder header(final ByteBuffer header) {
+      if (requireNonNull(header, "header must be non-null.").limit() == HEADER_BYTES) {
+        this.pageIndex(header.getLong());
+        this.commit(header.get() == (byte) 1);
+        this.randomSalt(header.getInt());
+        this.sequentialSalt(header.getInt());
+        this.checksum(header.getLong());
+      }
+
+      throw new IllegalArgumentException(
+          "header buffer must contain exactly WALFrame.HEADER_BYTES bytes.");
+    }
+
+    /**
      * Sets the {@link ByteBuffer} containing the page data for the frame. This buffer must have a
      * limit of exactly {@link Page#BYTES}. This field is required.
      *
@@ -244,14 +297,14 @@ public final class WALFrame {
      * @throws IllegalArgumentException If {@code page.limit() != Page.BYTES}.
      */
     public Builder page(final ByteBuffer page) {
-      if (requireNonNull(page, "page must be non-null").limit() == Page.BYTES) {
+      if (requireNonNull(page, "page must be non-null.").limit() == Page.BYTES) {
         this.page = page.rewind();
         this.mask |= 0x20;
 
         return this;
       }
 
-      throw new IllegalArgumentException("page buffer must contain exactly Page.BYTES");
+      throw new IllegalArgumentException("page buffer must contain exactly Page.BYTES.");
     }
 
     /**
@@ -263,7 +316,7 @@ public final class WALFrame {
     public WALFrame build() {
       if ((this.mask ^ 0x3f) == 0) {
         return new WALFrame(
-            this.pageNumber,
+            this.pageIndex,
             this.commit,
             this.randomSalt,
             this.sequentialSalt,
