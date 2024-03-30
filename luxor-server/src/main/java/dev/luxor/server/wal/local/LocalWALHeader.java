@@ -1,12 +1,12 @@
-package dev.luxor.server.wal;
+package dev.luxor.server.wal.local;
 
 import static java.util.Objects.requireNonNull;
 
-import dev.luxor.server.algo.FNV1a;
 import dev.luxor.server.io.LuxorFile;
+import dev.luxor.server.wal.CorruptWALException;
+import dev.luxor.server.wal.WALHeader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * An in-memory copy of the header in a {@link LocalWAL}.
@@ -40,37 +40,6 @@ public final class LocalWALHeader implements WALHeader {
   private final long checksum;
 
   /**
-   * Creates a new {@link LocalWALHeader} with the given values and a calculated {@code checksum}.
-   *
-   * @param magic The header magic.
-   * @param dbSize The database size in pages.
-   * @param checkpointSequence The amount of checkpoints executed.
-   * @param randomSalt The random salt.
-   * @param sequentialSalt The sequential salt.
-   */
-  private LocalWALHeader(
-      final int magic,
-      final long dbSize,
-      final int checkpointSequence,
-      final int randomSalt,
-      final int sequentialSalt) {
-    this.magic = magic;
-    this.dbSize = dbSize;
-    this.checkpointSequence = checkpointSequence;
-    this.randomSalt = randomSalt;
-    this.sequentialSalt = sequentialSalt;
-
-    this.checksum =
-        new FNV1a()
-            .iterate(this.magic)
-            .iterate(this.dbSize)
-            .iterate(this.checkpointSequence)
-            .iterate(this.randomSalt)
-            .iterate(this.sequentialSalt)
-            .state();
-  }
-
-  /**
    * Creates a new {@link LocalWALHeader} with the given values.
    *
    * @param magic The header magic.
@@ -96,18 +65,6 @@ public final class LocalWALHeader implements WALHeader {
   }
 
   /**
-   * Creates a new initialized {@link LocalWALHeader}.
-   *
-   * @return The new {@link LocalWALHeader}.
-   */
-  @SuppressWarnings(
-      "java:S2245") // the RNG isn't used in a cryptographically sensitive context here.
-  public static LocalWALHeader createDefault() {
-    return new LocalWALHeader(
-        MAGIC, 0L, 0, ThreadLocalRandom.current().nextInt(), ThreadLocalRandom.current().nextInt());
-  }
-
-  /**
    * Creates a new {@link LocalWALHeader} by reading it from the provided {@code wal}.
    *
    * @param wal The file containing the serialized {@link LocalWAL}.
@@ -116,7 +73,7 @@ public final class LocalWALHeader implements WALHeader {
    * @throws CorruptWALException If the {@link LocalWALHeader} cannot be read completely, or if its
    *     checksum is incorrect.
    */
-  public static LocalWALHeader createFromFile(final LuxorFile wal)
+  public static LocalWALHeader readFromFile(final LuxorFile wal)
       throws IOException, CorruptWALException {
     requireNonNull(wal, "wal must be non-null.");
 

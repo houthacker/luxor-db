@@ -6,10 +6,10 @@ import java.io.Serial;
  * This exception is thrown when an exclusive lock is being requested, but no shared lock is held at
  * that time.
  *
- * <p>If in that case a shared lock would be acquired automatically, there is no easy way to
+ * <p>If in that case a shared lock would be obtained automatically, there is no easy way to
  * distinguish between the case where a client held a shared lock prior to calling
  * lock(WALLOckType.EXCLUSIVE) and an 'automatic' shared lock. If then some error occurs while
- * trying to acquire the exclusive lock, this creates an additional issue because it cannot be
+ * trying to obtain the exclusive lock, this creates an additional issue because it cannot be
  * determined whether the shared lock must be released as well to return to the 'before' state.
  *
  * @author houthacker

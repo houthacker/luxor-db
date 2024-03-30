@@ -1,10 +1,20 @@
 plugins {
     id 'java-library'
+    id 'pmd'
+    id 'checkstyle'
     id 'org.sonarqube' version '5.0.0.4638'
+    id 'com.github.spotbugs' version '6.0.8' apply false
+    id 'com.diffplug.spotless' version '6.25.0' apply false
 }
 
 group = 'dev.luxor-db'
 version = '0.0.1-SNAPSHOT'
+
+sonarqube {
+    properties {
+        property "sonar.gradle.skipCompile", "true"
+    }
+}
 
 sonar {
     properties {

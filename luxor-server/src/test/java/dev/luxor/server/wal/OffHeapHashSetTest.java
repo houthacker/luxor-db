@@ -3,6 +3,7 @@ package dev.luxor.server.wal;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import dev.luxor.server.io.LuxorFile;
+import dev.luxor.server.wal.local.OffHeapHashSet;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;

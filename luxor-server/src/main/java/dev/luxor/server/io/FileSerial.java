@@ -67,7 +67,7 @@ public final class FileSerial {
   }
 
   /**
-   * Acquires a unique identification of the given path. Multiple paths leading to the same location
+   * Obtains a unique identification of the given path. Multiple paths leading to the same location
    * will yield the same {@link FileSerial}.
    *
    * @implNote All {@link FileSerial} instances are stored in a linked list to enable finding them
@@ -148,7 +148,7 @@ public final class FileSerial {
             "FileSerial {} has no more references; removing it from the linked list.", this.key);
       }
 
-      // Removing the serial is a structural change, acquire the write lock.
+      // Removing the serial is a structural change, obtain the write lock.
       GLOBAL_SERIAL_GUARD.writeLock().lock();
       try {
         if (nonNull(this.previous) && nonNull(this.next)) {
@@ -164,7 +164,7 @@ public final class FileSerial {
           final FileSerial subject = this.previous;
 
           // A FileSerial does provide locks itself, but these do not interact and therefore no real
-          // exclusive access to the FileSerial object can be acquired by using these. Therefore,
+          // exclusive access to the FileSerial object can be obtained by using these. Therefore,
           // synchronize on the FileSerial object when structural changes to it must be made.
           synchronized (subject) {
             this.previous.next = this.next;
@@ -173,7 +173,7 @@ public final class FileSerial {
           final FileSerial subject = this.next;
 
           // A FileSerial does provide locks itself, but these do not interact and therefore no real
-          // exclusive access to the FileSerial object can be acquired by using these. Therefore,
+          // exclusive access to the FileSerial object can be obtained by using these. Therefore,
           // synchronize on the FileSerial object when structural changes to it must be made.
           synchronized (subject) {
             this.next.previous = this.previous;
@@ -194,7 +194,7 @@ public final class FileSerial {
   /**
    * Returns a mutex to synchronize read/write access to referencing {@link LuxorFile}s.
    *
-   * @apiNote This lock is <em>not</em> meant to acquire r/w access to the {@link FileSerial} object
+   * @apiNote This lock is <em>not</em> meant to obtain r/w access to the {@link FileSerial} object
    *     itself, but rather to coordinate accesses to any related {@link LuxorFile}s.
    * @return The mutex lock.
    */
@@ -208,7 +208,7 @@ public final class FileSerial {
   /**
    * Returns a lock to synchronize referencing {@link LuxorFile} accesses.
    *
-   * @apiNote This lock is <em>not</em> meant to acquire access to the {@link FileSerial} object
+   * @apiNote This lock is <em>not</em> meant to obtain access to the {@link FileSerial} object
    *     itself, but rather to coordinate accesses to any related {@link LuxorFile}s.
    * @return The exclusive lock.
    */

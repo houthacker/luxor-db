@@ -2,8 +2,8 @@ plugins {
     id 'java-library'
     id 'pmd'
     id 'checkstyle'
-    id 'com.github.spotbugs' version "6.0.9"
-    id 'com.diffplug.spotless' version '6.25.0'
+    id 'com.github.spotbugs'
+    id 'com.diffplug.spotless'
 }
 
 group = 'dev.luxor-db'
@@ -27,7 +27,7 @@ tasks.withType(Test).configureEach {
 
 pmd {
     consoleOutput = true
-    toolVersion = "7.0.0-rc4"
+    toolVersion = "7.0.0"
     threads = 1
     ruleSetFiles = rootProject.files("config/pmd/pmd.xml")
     ruleSets = []

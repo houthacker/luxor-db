@@ -1,9 +1,11 @@
-package dev.luxor.server.wal;
+package dev.luxor.server.wal.local;
 
 import static java.util.Objects.nonNull;
 import static java.util.Objects.requireNonNull;
 
 import dev.luxor.server.io.LuxorFile;
+import dev.luxor.server.wal.RecursiveGrowException;
+import dev.luxor.server.wal.WALIndexTable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.foreign.Arena;

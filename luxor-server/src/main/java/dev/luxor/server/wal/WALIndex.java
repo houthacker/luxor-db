@@ -3,7 +3,6 @@ package dev.luxor.server.wal;
 import dev.luxor.server.concurrent.LockFailedException;
 import dev.luxor.server.concurrent.OutOfOrderLockException;
 import java.io.Closeable;
-import java.io.IOException;
 
 /**
  * A WAL index that maps WAL frame numbers to page numbers. Implementations may use backing storage
@@ -32,22 +31,29 @@ public interface WALIndex extends Closeable {
   boolean isStale();
 
   /**
-   * Finds the frame that contains {@code page}.
+   * Searches for the index of the frame that contains {@code page}.
    *
-   * @param page The number of the page that must be contained in the frame.
-   * @return The number of the frame containing the given page, or {@code -1} if no such frame
+   * @param page The index of the page that must be contained in the frame.
+   * @return The index of the frame containing the given page, or {@code -1} if no such frame
    *     exists.
    */
-  int findFrame(long page);
+  int findFrameIndexOf(long page);
 
   /**
-   * Maps {@code page} to {@code frame} so it can be searched for later.
+   * Notifies this index that the given {@code frame} has been appended to the WAL. The index will
+   * then update itself accordingly:
    *
-   * @param frame The frame number to map the page number to.
-   * @param page The page number to map.
-   * @throws IOException If an I/O error occurs while storing the page mapping.
+   * <ul>
+   *   <li>The cursor position will be incremented
+   *   <li>The cumulative checksum will be updated
+   *   <li>If the frame is a commit frame, the last commit frame will be set to the given {@code
+   *       index}
+   * </ul>
+   *
+   * @param frame The {@link WALFrame} that was appended.
+   * @param frameIndex The index the frame was written at.
    */
-  void put(int frame, long page) throws IOException;
+  void notifyAppended(WALFrame frame, int frameIndex);
 
   /**
    * Returns the most restrictive lock currently held by this {@link WALIndex}.
@@ -57,21 +63,42 @@ public interface WALIndex extends Closeable {
   WALLockType currentLock();
 
   /**
-   * Acquires a lock of {@code type} on this index. These locks control concurrency within the JVM
-   * as well as between competing processes.
+   * Obtains a lock of {@code type} on this index. Implementations must ensure that locks obtained
+   * with this method control concurrency within the JVM as well as between competing processes.
    *
    * <p>A shared lock must be held prior to requesting an exclusive lock.
    *
    * <p>If a lock of {@code type} is already held by the calling thread, this method will have no
    * (additional) effect.
    *
-   * @param type The lock type to acquire.
+   * @param type The lock type to obtain.
+   * @throws NullPointerException If {@code type} is {@code null}.
    * @throws OutOfOrderLockException If an exclusive lock is requested, but no shared lock is
    *     currently held.
    * @throws LockFailedException If the requested lock cannot be obtained.
    * @see OutOfOrderLockException
    */
   void lock(WALLockType type) throws LockFailedException;
+
+  /**
+   * Tries to obtain a lock of {@code type} on this index. Implementations must ensure that locks
+   * obtained using this method control concurrency within the JVM as well as between competing
+   * processes.
+   *
+   * <p>A shared lock must be held prior to requesting an exclusive lock.
+   *
+   * <p>If a lock of {@code type} is already held by the calling thread, this method will have no
+   * additional effect and immediately return {@code true}.
+   *
+   * @param type The lock type to obtain.
+   * @return {@code true} if the requested lock is now held by the current thread, {@code false}
+   *     otherwise.
+   * @throws NullPointerException If {@code type} is {@code null}.
+   * @throws OutOfOrderLockException If an exclusive lock is requested, but no shared lock is held
+   *     by the calling thread.
+   * @see OutOfOrderLockException
+   */
+  boolean tryLock(WALLockType type) throws OutOfOrderLockException;
 
   /** Releases any locks currently held. If no lock is currently held, this method has no effect. */
   void unlock();

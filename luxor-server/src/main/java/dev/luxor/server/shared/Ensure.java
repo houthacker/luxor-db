@@ -45,6 +45,22 @@ public final class Ensure {
   }
 
   /**
+   * Ensures the value of {@code subject} is at least {@code atLeast}.
+   *
+   * @param subject The subject to compare.
+   * @param atLeast The minimum value for {@code subject}.
+   * @return {@code subject}.
+   * @throws IllegalArgumentException if {@code subject < atLeast}.
+   */
+  public static short ensureAtLeast(final short subject, final short atLeast) {
+    if (subject < atLeast) {
+      throw new IllegalArgumentException(String.format("%d must be at least %d", subject, atLeast));
+    }
+
+    return subject;
+  }
+
+  /**
    * Ensures {@code subject} is at least zero.
    *
    * @param subject The subject value.
@@ -64,6 +80,17 @@ public final class Ensure {
    */
   public static int ensureAtLeastZero(final int subject) {
     return ensureAtLeast(subject, 0);
+  }
+
+  /**
+   * Ensures {@code subject} is at least zero.
+   *
+   * @param subject The subject value.
+   * @return {@code subject}.
+   * @throws IllegalArgumentException if {@code subject < 0}.
+   */
+  public static short ensureAtLeastZero(final short subject) {
+    return ensureAtLeast(subject, (short) 0);
   }
 
   /**

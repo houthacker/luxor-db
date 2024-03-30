@@ -2,9 +2,14 @@ package dev.luxor.server.wal;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import dev.luxor.server.algo.FNV1a;
 import dev.luxor.server.io.LuxorFile;
+import dev.luxor.server.io.Page;
+import dev.luxor.server.wal.local.OffHeapWALIndex;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import org.junit.jupiter.api.Test;
 
@@ -12,17 +17,29 @@ class OffHeapWALIndexTest {
 
   @Test
   void forceAllocateIndexPage() throws IOException {
+    final Path path = Files.createTempFile("OffHeapWALIndexTest-", "");
     try (final LuxorFile shm =
         LuxorFile.open(
-            Files.createTempFile("OffHeapWALIndexTest-", ""),
-            StandardOpenOption.READ,
-            StandardOpenOption.WRITE,
-            StandardOpenOption.CREATE)) {
-      final OffHeapWALIndex index = new OffHeapWALIndex(shm);
+            path, StandardOpenOption.READ, StandardOpenOption.WRITE, StandardOpenOption.CREATE)) {
+      final OffHeapWALIndex index = OffHeapWALIndex.buildInitial(0L, shm);
+
+      // Use a single WALFrame to 'fill' the index.
+      final ByteBuffer header = ByteBuffer.allocate(WALFrame.HEADER_BYTES);
+      final ByteBuffer page = ByteBuffer.allocate(Page.BYTES);
 
       for (int i = 0; i <= 4096; i++) {
-        index.put(i, (long) i);
-        assertEquals(i, index.findFrame(i));
+        final long pageIndex = i + 1;
+        final WALFrame frame =
+            WALFrame.newBuilder()
+                .page(page)
+                .pageIndex(pageIndex)
+                .randomSalt(1)
+                .sequentialSalt(2)
+                .commit(false)
+                .calculateChecksum(new FNV1a().state())
+                .build();
+        index.notifyAppended(frame, i);
+        assertEquals(i, index.findFrameIndexOf(pageIndex));
       }
     }
   }

@@ -24,7 +24,7 @@ public interface WALHeader {
   /**
    * The database size in pages. Note that page {@code zero} is reserved for the database header.
    *
-   * @return The size of the database in pages.
+   * @return The size of the database in pages, or {@code 0} if the size is unknown.
    */
   long dbSize();
 
@@ -59,7 +59,7 @@ public interface WALHeader {
   /**
    * Serializes this {@link WALHeader} into a new {@link ByteBuffer}.
    *
-   * @return The byte buffer.
+   * @return The serialized {@link WALHeader}.
    */
   ByteBuffer asByteBuffer();
 
