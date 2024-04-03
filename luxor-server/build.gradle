@@ -27,7 +27,7 @@ tasks.withType(Test).configureEach {
 
 pmd {
     consoleOutput = true
-    toolVersion = "7.0.0-rc4"
+    toolVersion = "7.0.0"
     threads = 1
     ruleSetFiles = rootProject.files("config/pmd/pmd.xml")
     ruleSets = []

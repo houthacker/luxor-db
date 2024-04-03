@@ -251,15 +251,15 @@ public final class WALFrame {
     }
 
     /**
-     * Calculates the checksum for this frame using {@code previousChecksum} as the initial checksum
-     * state.
+     * Calculates the checksum for this frame using {@code cumulativeChecksum} as the initial
+     * checksum state.
      *
-     * @param previousChecksum The cumulative checksum of the preceding frame.
+     * @param cumulativeChecksum The cumulative checksum of the preceding frame.
      * @return This {@link Builder} instance.
      */
-    public Builder calculateChecksum(final long previousChecksum) {
+    public Builder calculateChecksum(final FNV1a cumulativeChecksum) {
       return this.checksum(
-          new FNV1a(previousChecksum)
+          cumulativeChecksum
               .iterate(this.pageIndex)
               .iterate(this.commit)
               .iterate(this.randomSalt)

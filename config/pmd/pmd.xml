@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<ruleset name="Custom ruleset"
+<ruleset name="Luxor PMD Rules"
          xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0
@@ -18,7 +18,9 @@
     <rule ref="category/java/design.xml">
         <exclude name="LoosePackageCoupling"/>
     </rule>
-    <rule ref="category/java/documentation.xml"/>
+    <rule ref="category/java/documentation.xml">
+        <exclude name="CommentRequired"/>
+    </rule>
     <rule ref="category/java/multithreading.xml"/>
     <rule ref="category/java/performance.xml"/>
     <rule ref="category/java/security.xml"/>
@@ -67,7 +69,8 @@
 
     <rule ref="category/java/documentation.xml/CommentRequired">
         <properties>
-            <property name="violationSuppressXPath" value="//FieldDeclaration//VariableId[@Name='log']"/>
+            <property name="violationSuppressXPath"
+                      value="//FieldDeclaration[.//VariableId[@Name='log' and @Visibility='private' and @Final='true']]"/>
         </properties>
     </rule>
 
