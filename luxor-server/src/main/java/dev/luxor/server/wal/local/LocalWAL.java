@@ -1,5 +1,6 @@
 package dev.luxor.server.wal.local;
 
+import static java.util.Objects.nonNull;
 import static java.util.Objects.requireNonNull;
 
 import dev.luxor.server.algo.FNV1a;
@@ -12,6 +13,7 @@ import dev.luxor.server.wal.CorruptWALException;
 import dev.luxor.server.wal.StaleWALException;
 import dev.luxor.server.wal.TransientWALWriteException;
 import dev.luxor.server.wal.WALFrame;
+import dev.luxor.server.wal.WALHeader;
 import dev.luxor.server.wal.WALLockType;
 import dev.luxor.server.wal.WALWriteException;
 import dev.luxor.server.wal.WriteAheadLog;
@@ -20,10 +22,12 @@ import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousCloseException;
 import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.ClosedChannelException;
+import java.nio.channels.FileLock;
 import java.nio.channels.NonWritableChannelException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +38,7 @@ import org.slf4j.LoggerFactory;
  *
  * @author houthacker
  */
-@SuppressWarnings("PMD.TooManyMethods") // Refactor?
+@SuppressWarnings({"PMD.TooManyMethods", "PMD.ExcessiveImports"})
 public final class LocalWAL implements WriteAheadLog {
 
   private static final Logger log = LoggerFactory.getLogger(LocalWAL.class);
@@ -70,6 +74,8 @@ public final class LocalWAL implements WriteAheadLog {
    *
    * @param databasePath The path of the related database.
    * @return A new {@link LocalWAL} instance.
+   * @throws IllegalStateException If a new WAL is opened while some other thread already owns the
+   *     initializer lock. In this case, callers should just retry to open the WAL.
    * @throws java.util.ConcurrentModificationException If the WAL index is modified while reading it
    *     from shared memory, or if changes to the WAL contents are detected after obtaining the
    *     exclusive lock.
@@ -106,6 +112,15 @@ public final class LocalWAL implements WriteAheadLog {
     return wal;
   }
 
+  /**
+   * Creates a new {@link LocalWAL} instance based on an existing WAL.
+   *
+   * @param walPath The path to the WAL file.
+   * @param walIndexPath The path to the WAL index file.
+   * @return The resulting {@link LocalWAL} instance.
+   * @throws IOException If an I/O error occurs while reading or writing any of the provided paths.
+   * @throws CorruptWALException If the WAL checksum is invalid.
+   */
   @SuppressWarnings("java:S2095") // The LuxorFile is closed when the WAL is closed.
   private static LocalWAL openExisting(final Path walPath, final Path walIndexPath)
       throws IOException, CorruptWALException {
@@ -125,42 +140,118 @@ public final class LocalWAL implements WriteAheadLog {
                 StandardOpenOption.CREATE)));
   }
 
+  /**
+   * Creates a new WAL at the given {@code walPath} and writes an initial header to it. Creating a
+   * new WAL when a database file contains any data is not yet supported.
+   *
+   * @param databasePath The path to the database file.
+   * @param walPath The path to the WAL file.
+   * @param walIndexPath The path to the WAL index file.
+   * @return The resulting {@link LocalWAL} instance.
+   * @throws IOException If an I/O error occurs while reading or writing any of the provided paths.
+   * @throws CorruptWALException If the initial WAL header cannot be fully written to the WAL file.
+   */
   @SuppressWarnings({
     "PMD.AvoidLiteralsInIfCondition", // Allowed for empty check.
     "java:S2095", // The LuxorFile is closed when the WAL is closed.
-    "java:S2093" // The WAL must not be closed here.
   })
   private static LocalWAL openNew(
-      final Path databasePath, final Path walPath, final Path walIndexPath) throws IOException {
+      final Path databasePath, final Path walPath, final Path walIndexPath)
+      throws IOException, CorruptWALException {
     log.debug("Opening new WAL at {}.", walPath);
-    INIT_LOCK.lock();
-    try {
+    if (INIT_LOCK.tryLock()) {
+      try {
 
-      if (Files.size(databasePath) == 0L) {
-        // Open the WAL- and index file, throwing an exception if someone beat us to it and did
-        // create the WAL file in the meantime. In that case, clients should just retry to open the
-        // WAL.
-        final LuxorFile wal =
-            LuxorFile.open(
-                walPath,
-                StandardOpenOption.READ,
-                StandardOpenOption.WRITE,
-                StandardOpenOption.CREATE_NEW);
-        return new LocalWAL(
-            wal,
-            OffHeapWALIndex.buildInitial(
-                0L,
-                LuxorFile.open(
-                    walIndexPath,
-                    StandardOpenOption.READ,
-                    StandardOpenOption.WRITE,
-                    StandardOpenOption.CREATE_NEW)));
-      } else {
+        if (Files.size(databasePath) == 0L) {
+          // Open the WAL- and index file, throwing an exception if someone beat us to it and did
+          // create the WAL file in the meantime.
+          final LuxorFile walFile =
+              LuxorFile.open(
+                  walPath,
+                  StandardOpenOption.READ,
+                  StandardOpenOption.WRITE,
+                  StandardOpenOption.CREATE_NEW);
+          final LuxorFile walIndexFile =
+              LuxorFile.open(
+                  walIndexPath,
+                  StandardOpenOption.READ,
+                  StandardOpenOption.WRITE,
+                  StandardOpenOption.CREATE_NEW);
+
+          // Then write the WAL header and -index.
+          return writeWALHeaderAndIndex(walFile, walIndexFile);
+        }
+
+        // Creating a new WAL based on a non-empty database is mot yet supported.
         throw new UnsupportedOperationException("Not implemented");
+      } finally {
+        INIT_LOCK.unlock();
+      }
+    }
+
+    throw new IllegalStateException("Cannot obtain initializer lock.");
+  }
+
+  /**
+   * Writes a new {@link LocalWALHeader} to the WAL and creates a new {@link OffHeapWALIndex} based
+   * on that new WAL header. If either of the files is not empty, an exception is thrown to prevent
+   * WAL corruption.
+   *
+   * @param walFile The WAL file.
+   * @param walIndexFile The WAL index file.
+   * @return A new {@link LocalWAL} instance.
+   * @throws IOException If an I/O error occurs when reading from, or writing to the WAL (index).
+   * @throws CorruptWALException If the WAL checksum is invalid, or if the WAL header cannot be
+   *     completely written to the WAL file.
+   */
+  @SuppressWarnings({
+    "java:S2245", // The random number generator is not used in a security context.
+    "java:S2093" // Cannot close the WAL file we're creating here.
+  })
+  private static LocalWAL writeWALHeaderAndIndex(
+      final LuxorFile walFile, final LuxorFile walIndexFile)
+      throws IOException, CorruptWALException {
+
+    // First, get both a read- and a write lock on walIndexFile.
+    try (FileLock readLock = walIndexFile.tryLock(WALLockType.SHARED.offset(), 1L, true);
+        FileLock writeLock = walIndexFile.tryLock(WALLockType.EXCLUSIVE.offset(), 1L, false)) {
+      if (nonNull(readLock) && nonNull(writeLock)) {
+
+        // At this point we know we were the ones that created both files.
+        // Now re-ensure that they're empty.
+        if (walFile.size() == 0L && walIndexFile.size() == 0L) {
+
+          // Create an initial WAL header and write it to the WAL file.
+          final ThreadLocalRandom rng = ThreadLocalRandom.current();
+          final LocalWALHeader walHeader =
+              LocalWALHeader.newBuilder()
+                  .magic(WALHeader.MAGIC)
+                  .dbSize(0L)
+                  .checkpointSequence(0)
+                  .randomSalt(rng.nextInt())
+                  .sequentialSalt(rng.nextInt())
+                  .calculateChecksum()
+                  .build();
+          if (walFile.write(walHeader.asByteBuffer(), 0L) != LocalWALHeader.BYTES) {
+            throw new CorruptWALException(
+                "Cannot create new WAL: could not write initial WAL header.");
+          }
+          walFile.sync();
+
+          // And then create the WAL index based on the values from the WAL header.
+          final OffHeapWALIndex index =
+              OffHeapWALIndex.buildInitial(
+                  walHeader.dbSize(),
+                  walHeader.randomSalt(),
+                  walHeader.sequentialSalt(),
+                  walIndexFile);
+          return new LocalWAL(walFile, index);
+        }
+
+        throw new IllegalStateException("Cannot create new WAL: it is not empty.");
       }
 
-    } finally {
-      INIT_LOCK.unlock();
+      throw new IllegalStateException("Cannot create new WAL: error obtaining initializer locks.");
     }
   }
 

@@ -18,7 +18,6 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
 import java.nio.channels.FileLock;
 import java.util.ConcurrentModificationException;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.StreamSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -155,25 +154,25 @@ public final class OffHeapWALIndex implements WALIndex {
   }
 
   /**
-   * Builds a new {@link OffHeapWALIndex}, starting with a database size of {@code dbSize}. The
-   * index will be memory mapped into the first {@code LAYOUT.byteSize()} bytes of {@code shm}.
+   * Builds a new {@link OffHeapWALIndex}, using a database size of {@code dbSize}. The index will
+   * be memory mapped into the first {@code LAYOUT.byteSize()} bytes of {@code shm}.
    *
    * @param dbSize The size of the database in pages.
+   * @param randomSalt The random salt value, copied from the WAL header.
+   * @param sequentialSalt The sequential salt value, copied from the WAL header.
    * @param shm The backing file for the index.
    * @return A new {@link OffHeapWALIndex} instance.
    * @throws IOException If memory-mapping the file fails.
    */
   @SuppressWarnings("java:S2245") // rng is not used in a security context here.
-  public static OffHeapWALIndex buildInitial(final long dbSize, final LuxorFile shm)
+  public static OffHeapWALIndex buildInitial(
+      final long dbSize, final int randomSalt, final int sequentialSalt, final LuxorFile shm)
       throws IOException {
     final MemorySegment memory =
         requireNonNull(shm, "Cannot create OffHeapWALIndex: backing file must be non-null.")
             .mapShared(0L, LAYOUT.byteSize())
             .fill((byte) 0);
 
-    final ThreadLocalRandom rng = ThreadLocalRandom.current();
-    final int randomSalt = rng.nextInt();
-    final int sequentialSalt = rng.nextInt();
     final long checksum = new FNV1a().state();
     final long initialOffset = LAYOUT.byteOffset(HEADERS_ELEMENT);
 

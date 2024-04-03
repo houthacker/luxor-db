@@ -17,14 +17,13 @@ class OffHeapWALIndexTest {
 
   @Test
   void forceAllocateIndexPage() throws IOException {
-    final Path path = Files.createTempFile("OffHeapWALIndexTest-", "");
+    final Path path = Files.createTempFile("OffHeapWALIndexTest-", "-shm");
     try (final LuxorFile shm =
         LuxorFile.open(
             path, StandardOpenOption.READ, StandardOpenOption.WRITE, StandardOpenOption.CREATE)) {
-      final OffHeapWALIndex index = OffHeapWALIndex.buildInitial(0L, shm);
+      final OffHeapWALIndex index = OffHeapWALIndex.buildInitial(0L, 1, 2, shm);
 
       // Use a single WALFrame to 'fill' the index.
-      final ByteBuffer header = ByteBuffer.allocate(WALFrame.HEADER_BYTES);
       final ByteBuffer page = ByteBuffer.allocate(Page.BYTES);
 
       for (int i = 0; i <= 4096; i++) {
@@ -36,7 +35,7 @@ class OffHeapWALIndexTest {
                 .randomSalt(1)
                 .sequentialSalt(2)
                 .commit(false)
-                .calculateChecksum(new FNV1a().state())
+                .calculateChecksum(new FNV1a())
                 .build();
         index.notifyAppended(frame, i);
         assertEquals(i, index.findFrameIndexOf(pageIndex));
