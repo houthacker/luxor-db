@@ -2,6 +2,7 @@ plugins {
     id 'java-library'
     id 'pmd'
     id 'checkstyle'
+    id 'jacoco'
     id 'org.sonarqube' version '5.0.0.4638'
     id 'com.github.spotbugs' version '6.0.9' apply false
     id 'com.diffplug.spotless' version '6.25.0' apply false
