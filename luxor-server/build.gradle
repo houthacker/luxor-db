@@ -2,6 +2,7 @@ plugins {
     id 'java-library'
     id 'pmd'
     id 'checkstyle'
+    id 'jacoco'
     id 'com.github.spotbugs'
     id 'com.diffplug.spotless'
 }
@@ -42,6 +43,10 @@ checkstyle {
 
 spotbugs {
     spotbugsTest.enabled = false
+}
+
+jacoco {
+    toolVersion "0.8.11"
 }
 
 spotbugsMain {
@@ -86,4 +91,14 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    finalizedBy jacocoTestReport
+}
+
+jacocoTestReport {
+    dependsOn test
+
+    reports {
+        xml.required = false
+        csv.required = false
+    }
 }
