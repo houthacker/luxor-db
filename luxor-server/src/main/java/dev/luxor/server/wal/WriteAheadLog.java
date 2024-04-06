@@ -137,6 +137,7 @@ public interface WriteAheadLog extends Closeable {
    *
    * @param frameIndex The frame index to read.
    * @return A {@link Page} containing the page content.
+   * @throws IllegalArgumentException If {@code frameIndex < 0}.
    * @throws CorruptPageException If the page cannot be read completely.
    * @throws IOException If an I/O error occurs while reading the page.
    * @throws NoSuchPageException If the file contains no frame with {@code frameIndex}.

@@ -81,6 +81,10 @@ public final class OffHeapHashSet implements WALIndexTable {
               ValueLayout.ADDRESS.withTargetLayout(ENTRY_LAYOUT).withName(DATA_NAME))
           .withName("hash_set");
 
+  static {
+    assert LAYOUT.byteAlignment() == ValueLayout.ADDRESS.byteAlignment();
+  }
+
   /** The byte offset of the 'size' field in the hash_set struct. */
   private static final long SIZE_OFFSET =
       LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(SIZE_NAME));
@@ -128,19 +132,20 @@ public final class OffHeapHashSet implements WALIndexTable {
    * required.
    *
    * @param file The memory-mapped file.
-   * @param requestedOffset The minimum offset in the memory-mapped file for the {@link
-   *     MemorySegment} of this HashSet.
+   * @param offset The offset in the memory-mapped file for the {@link MemorySegment} of this
+   *     HashSet.
    * @throws IOException If memory mapping the required file regions fails.
+   * @throws IllegalArgumentException If {@code offset} is not aligned to the memory layout of this
+   *     hash set.
    */
-  public OffHeapHashSet(final LuxorFile file, final long requestedOffset) throws IOException {
+  public OffHeapHashSet(final LuxorFile file, final long offset) throws IOException {
     this.file = requireNonNull(file, "file");
-    this.headerOffset = align(requestedOffset, LAYOUT.byteAlignment());
 
-    if (log.isTraceEnabled() && this.headerOffset != requestedOffset) {
-      log.trace(
-          "Storing OffHeapHashSet at aligned offset {} instead of requested offset {}.",
-          this.headerOffset,
-          requestedOffset);
+    if (isAligned(offset)) {
+      this.headerOffset = offset;
+    } else {
+      throw new IllegalArgumentException(
+          String.format("offset %d not aligned to %d.", offset, LAYOUT.byteAlignment()));
     }
 
     this.header = this.file.mapShared(this.headerOffset, LAYOUT.byteSize());
@@ -148,17 +153,13 @@ public final class OffHeapHashSet implements WALIndexTable {
   }
 
   /**
-   * Aligns {@code offset} to {@code alignment}. The returned value is never less than {@code
-   * offset}.
+   * Calculates whether the given offset is a multiple of {@code LAYOUT.byteAlignment()}.
    *
-   * @param offset The offset to align.
-   * @param alignment The alignment to align to.
-   * @return The aligned offset.
+   * @param offset The offset to check.
+   * @return {@code true} if {@code offset} is aligned, {@code false} otherwise.
    */
-  private static long align(final long offset, final long alignment) {
-    final long remainder = offset % alignment;
-
-    return remainder == 0 ? offset : offset + remainder;
+  private static boolean isAligned(final long offset) {
+    return offset % LAYOUT.byteAlignment() == 0;
   }
 
   /**

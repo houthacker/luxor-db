@@ -1,5 +1,6 @@
 package dev.luxor.server.wal.local;
 
+import static dev.luxor.server.shared.Ensure.ensureAtLeastZero;
 import static java.util.Objects.nonNull;
 import static java.util.Objects.requireNonNull;
 
@@ -182,7 +183,7 @@ public final class LocalWAL implements WriteAheadLog {
           return writeWALHeaderAndIndex(walFile, walIndexFile);
         }
 
-        // Creating a new WAL based on a non-empty database is mot yet supported.
+        // Creating a new WAL based on a non-empty database is not yet supported.
         throw new UnsupportedOperationException("Not implemented");
       } finally {
         INIT_LOCK.unlock();
@@ -286,6 +287,12 @@ public final class LocalWAL implements WriteAheadLog {
   /** {@inheritDoc} */
   @Override
   public ByteBuffer pageAt(final int frameIndex) throws IOException, NoSuchPageException {
+    final WALLockType lockType = this.index.currentLock();
+    if (lockType.mask() < WALLockType.SHARED.mask()) {
+      log.warn("Reading WAL frame with unexpected lock type {}.", lockType.name());
+    }
+
+    ensureAtLeastZero(frameIndex);
 
     // Check if the given frame is within the file bounds from the point of view of the calling
     // thread.
@@ -333,6 +340,10 @@ public final class LocalWAL implements WriteAheadLog {
   @Override
   @SuppressWarnings("PMD.CyclomaticComplexity")
   public void writePage(final Page page, final boolean commit) throws TransientWALWriteException {
+    final WALLockType lockType = this.index.currentLock();
+    if (lockType != WALLockType.EXCLUSIVE) {
+      log.warn("Writing WAL frame with unexpected lock type {}.", lockType.name());
+    }
 
     try {
       requireNonNull(page, "page must be non-null");
@@ -361,8 +372,7 @@ public final class LocalWAL implements WriteAheadLog {
 
       // Then write the frame.
       if (log.isTraceEnabled()) {
-        log.trace(
-            "Writing frame(index={}, page={} commit={}) to WAL", cursor, page.index(), commit);
+        log.trace("Writing WAL frame(index={}, page={} commit={})", cursor, page.index(), commit);
       }
       this.file.write(frame.header(), offset);
       this.file.write(pageData.rewind(), offset + WALFrame.HEADER_BYTES);

@@ -1,5 +1,6 @@
 package dev.luxor.server.wal.local;
 
+import static dev.luxor.server.io.Allocations.isCompatibleWith;
 import static dev.luxor.server.shared.Ensure.ensureAtLeastZero;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
@@ -20,7 +21,7 @@ import java.util.Objects;
 public final class OffHeapWALIndexHeader implements WALIndexHeader {
 
   /** The name of the 'last_valid_frame' field in a wal_index_header struct. */
-  private static final String LAST_VALID_FRAME_NAME = "last_valid_frame"; // NOPMD (LongVariable)
+  private static final String LAST_COMMIT_FRAME_NAME = "last_commit_frame"; // NOPMD (LongVariable)
 
   /** The name of the 'frame_cursor' field in a wal_index_header struct. */
   private static final String WAL_CURSOR_NAME = "wal_cursor";
@@ -31,21 +32,21 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
   /** The name of the 'seq_salt' field in the index header struct. */
   private static final String SEQ_SALT_NAME = "seq_salt";
 
-  /** The name of the 'checksum' field in the index header struct. */
-  private static final String CHECKSUM_NAME = "checksum";
-
   /** The name of the 'db_size' field in the index header struct. */
   private static final String DB_SIZE_NAME = "db_size";
+
+  /** The name of the 'checksum' field in the index header struct. */
+  private static final String CHECKSUM_NAME = "checksum";
 
   /** The layout of a wal_index_header struct in off-heap memory. */
   public static final MemoryLayout LAYOUT =
       MemoryLayout.structLayout(
-              JAVA_INT.withName(LAST_VALID_FRAME_NAME),
+              JAVA_INT.withName(LAST_COMMIT_FRAME_NAME),
               JAVA_INT.withName(WAL_CURSOR_NAME),
               JAVA_INT.withName(RANDOM_SALT_NAME),
               JAVA_INT.withName(SEQ_SALT_NAME),
-              JAVA_LONG.withName(CHECKSUM_NAME),
-              JAVA_LONG.withName(DB_SIZE_NAME))
+              JAVA_LONG.withName(DB_SIZE_NAME),
+              JAVA_LONG.withName(CHECKSUM_NAME))
           .withName("wal_index_header");
 
   static {
@@ -53,10 +54,10 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
     assert LAYOUT.byteSize() == 32;
   }
 
-  /** The offset in bytes of the 'last_valid_frame' field in the index header struct. */
+  /** The offset in bytes of the 'last_commit_frame' field in the index header struct. */
   @SuppressWarnings("PMD.LongVariable")
-  private static final long LAST_VALID_FRAME_OFFSET =
-      LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(LAST_VALID_FRAME_NAME));
+  private static final long LAST_COMMIT_FRAME_OFFSET =
+      LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(LAST_COMMIT_FRAME_NAME));
 
   /** The offset in bytes of the 'wal_cursor' field in the index header struct. */
   private static final long WAL_CURSOR_OFFSET =
@@ -70,19 +71,19 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
   private static final long SEQ_SALT_OFFSET =
       LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(SEQ_SALT_NAME));
 
-  /** The offset in bytes of the 'checksum' field in the index header struct. */
-  private static final long CHECKSUM_OFFSET =
-      LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(CHECKSUM_NAME));
-
   /** The offset in bytes of the 'db_size' field in the index header struct. */
   private static final long DB_SIZE_OFFSET =
       LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(DB_SIZE_NAME));
 
-  /** Manages the index of the next frame to write. */
-  private final WALCursor cursor;
+  /** The offset in bytes of the 'checksum' field in the index header struct. */
+  private static final long CHECKSUM_OFFSET =
+      LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(CHECKSUM_NAME));
 
   /** The last valid commit frame within the WAL. */
   private int lastCommitFrame;
+
+  /** Manages the index of the next frame to write. */
+  private final WALCursor cursor;
 
   /** The random salt. */
   @SuppressWarnings("PMD.ImmutableField")
@@ -92,11 +93,11 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
   @SuppressWarnings("PMD.ImmutableField")
   private int sequentialSalt;
 
-  /** The cumulative checksum. */
-  private long cumulativeChecksum;
-
   /** The database size in pages. */
   private long dbSize;
+
+  /** The cumulative checksum. */
+  private long cumulativeChecksum;
 
   /**
    * Creates a new {@link OffHeapWALIndexHeader} that contains a copy of the data in the provided
@@ -106,22 +107,39 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
    */
   private OffHeapWALIndexHeader(final MemorySegment segment) {
     this.lastCommitFrame =
-        requireNonNull(segment, "segment must be non-null.").get(JAVA_INT, LAST_VALID_FRAME_OFFSET);
+        requireNonNull(segment, "segment must be non-null.")
+            .get(JAVA_INT, LAST_COMMIT_FRAME_OFFSET);
     this.cursor = new WALCursor(segment.get(JAVA_INT, WAL_CURSOR_OFFSET));
     this.randomSalt = segment.get(JAVA_INT, RANDOM_SALT_OFFSET);
     this.sequentialSalt = segment.get(JAVA_INT, SEQ_SALT_OFFSET);
-    this.cumulativeChecksum = segment.get(JAVA_LONG, CHECKSUM_OFFSET);
     this.dbSize = segment.get(JAVA_LONG, DB_SIZE_OFFSET);
+    this.cumulativeChecksum = segment.get(JAVA_LONG, CHECKSUM_OFFSET);
   }
 
   /**
-   * Creates a new builder for {@link OffHeapWALIndexHeader} instances.
+   * Creates a new builder for {@link OffHeapWALIndexHeader} instances. The given {@code memory}
+   * must match the {@link MemoryLayout} of an {@link OffHeapWALIndexHeader}.
    *
    * @param memory The backing memory segment.
    * @return A new {@link Builder} instance.
+   * @throws NullPointerException If {@code memory} is {@code null}.
+   * @throws IllegalArgumentException If {@code memory} is incompatible with {@link
+   *     OffHeapWALIndexHeader#LAYOUT}.
    */
   public static Builder newBuilder(final MemorySegment memory) {
     return new Builder(memory);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public int lastCommitFrame() {
+    return this.lastCommitFrame;
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public int cursor() {
+    return this.cursor.position();
   }
 
   /** {@inheritDoc} */
@@ -138,26 +156,14 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
 
   /** {@inheritDoc} */
   @Override
-  public long cumulativeChecksum() {
-    return this.cumulativeChecksum;
-  }
-
-  /** {@inheritDoc} */
-  @Override
-  public int lastCommitFrame() {
-    return this.lastCommitFrame;
-  }
-
-  /** {@inheritDoc} */
-  @Override
   public long dbSize() {
     return this.dbSize;
   }
 
   /** {@inheritDoc} */
   @Override
-  public int cursor() {
-    return this.cursor.position();
+  public long cumulativeChecksum() {
+    return this.cumulativeChecksum;
   }
 
   /** {@inheritDoc} */
@@ -169,9 +175,9 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
     this.cursor.increment();
     this.cumulativeChecksum = frame.checksum();
 
-    // We just increase the database size. If this is a commit, this size will be written to the
+    // We just increased the database size. If this is a commit, this size will be written to the
     // WALHeader. If this is not a commit, the incremented size will only be visible to the current
-    // thread. If the commit fails, this in-memory index header is discarded.
+    // thread. If the commit fails, this on-heap header copy is discarded.
     this.dbSize++;
     if (frame.isCommit()) {
       this.lastCommitFrame = frameIndex;
@@ -213,11 +219,9 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
     private final MemorySegment memory;
 
     private Builder(final MemorySegment memory) {
-      if (requireNonNull(memory, "memory must be non-null").byteSize() != LAYOUT.byteSize()) {
+      if (!isCompatibleWith(memory, OffHeapWALIndexHeader.LAYOUT)) {
         throw new IllegalArgumentException(
-            String.format(
-                "MemorySegment for OffHeapWALIndexHeader must be exactly %d bytes",
-                LAYOUT.byteSize()));
+            "MemorySegment is not compatible with OffHeapWALIndexHeader.LAYOUT");
       }
 
       this.memory = memory;
@@ -226,11 +230,23 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
     /**
      * Writes the given index of the last valid wal-frame to the backing memory segment.
      *
-     * @param lastValidFrame The index of the last valid commit frame.
+     * @param lastCommitFrame The index of the last valid commit frame.
      * @return This {@link Builder} instance.
      */
-    public Builder lastValidFrame(final int lastValidFrame) {
-      this.memory.set(JAVA_INT, LAST_VALID_FRAME_OFFSET, lastValidFrame);
+    public Builder lastCommitFrame(final int lastCommitFrame) {
+      this.memory.set(JAVA_INT, LAST_COMMIT_FRAME_OFFSET, lastCommitFrame);
+
+      return this;
+    }
+
+    /**
+     * Writes the given cursor value to the backing memory segment.
+     *
+     * @param cursor The position of the next WAL frame to read.
+     * @return This {@link Builder} instance.
+     */
+    public Builder cursor(final int cursor) {
+      this.memory.set(JAVA_INT, WAL_CURSOR_OFFSET, cursor);
 
       return this;
     }
