@@ -35,10 +35,10 @@ public interface WALIndexHeader {
   long cumulativeChecksum();
 
   /**
-   * Returns the index of the last valid frame within the containing WAL. This frame is always a
-   * commit frame and always contains the latest valid B+Tree root page.
+   * Returns the index of the last valid frame within the containing WAL. This frame always contains
+   * the latest valid B+Tree root page.
    *
-   * @return The last valid frame index.
+   * @return The last valid frame index, or {@code -1} if there is no such frame.
    */
   int lastCommitFrame();
 
@@ -57,7 +57,7 @@ public interface WALIndexHeader {
    * @return {@code true} if the WAL is empty, {@code false} otherwise.
    */
   default boolean isEmpty() {
-    return lastCommitFrame() == 0;
+    return lastCommitFrame() == -1;
   }
 
   /**

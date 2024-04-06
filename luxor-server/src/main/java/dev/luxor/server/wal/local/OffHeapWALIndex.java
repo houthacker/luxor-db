@@ -1,5 +1,6 @@
 package dev.luxor.server.wal.local;
 
+import static dev.luxor.server.shared.Ensure.ensureAtLeastZero;
 import static java.util.Objects.nonNull;
 import static java.util.Objects.requireNonNull;
 
@@ -30,7 +31,7 @@ import org.slf4j.LoggerFactory;
  *     class arises, it is obviously required to find another mitigation.
  * @author houthacker
  */
-@SuppressWarnings("PMD.TooManyMethods") // TODO maybe later extract all locking-related methods?
+@SuppressWarnings("PMD.TooManyMethods")
 public final class OffHeapWALIndex implements WALIndex {
 
   private static final Logger log = LoggerFactory.getLogger(OffHeapWALIndex.class);
@@ -162,12 +163,15 @@ public final class OffHeapWALIndex implements WALIndex {
    * @param sequentialSalt The sequential salt value, copied from the WAL header.
    * @param shm The backing file for the index.
    * @return A new {@link OffHeapWALIndex} instance.
+   * @throws IllegalArgumentException If {@code dbSize < 0}.
+   * @throws NullPointerException If {@code shm} is {@code null}.
    * @throws IOException If memory-mapping the file fails.
    */
-  @SuppressWarnings("java:S2245") // rng is not used in a security context here.
+  @SuppressWarnings("java:S2245") // rng is not used in a security context.
   public static OffHeapWALIndex buildInitial(
       final long dbSize, final int randomSalt, final int sequentialSalt, final LuxorFile shm)
       throws IOException {
+    ensureAtLeastZero(dbSize);
     final MemorySegment memory =
         requireNonNull(shm, "Cannot create OffHeapWALIndex: backing file must be non-null.")
             .mapShared(0L, LAYOUT.byteSize())
@@ -184,7 +188,7 @@ public final class OffHeapWALIndex implements WALIndex {
             .dbSize(dbSize)
             .randomSalt(randomSalt)
             .sequentialSalt(sequentialSalt)
-            .lastValidFrame(0)
+            .lastCommitFrame(-1)
             .cumulativeChecksum(checksum)
             .build(),
         OffHeapWALIndexHeader.newBuilder(
@@ -194,7 +198,7 @@ public final class OffHeapWALIndex implements WALIndex {
             .dbSize(dbSize)
             .randomSalt(randomSalt)
             .sequentialSalt(sequentialSalt)
-            .lastValidFrame(0)
+            .lastCommitFrame(-1)
             .cumulativeChecksum(checksum)
             .build());
   }
