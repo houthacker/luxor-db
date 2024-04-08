@@ -79,7 +79,7 @@ repositories {
 
 dependencies {
     compileOnly 'net.jcip:jcip-annotations:1.0'
-    compileOnly 'com.github.spotbugs:spotbugs-annotations:4.8.3'
+    compileOnly 'com.github.spotbugs:spotbugs-annotations:4.8.4'
 
     implementation 'org.slf4j:slf4j-api:2.0.12'
 
