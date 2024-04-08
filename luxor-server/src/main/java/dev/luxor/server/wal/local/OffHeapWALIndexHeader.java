@@ -2,8 +2,6 @@ package dev.luxor.server.wal.local;
 
 import static dev.luxor.server.io.Allocations.isCompatibleWith;
 import static dev.luxor.server.shared.Ensure.ensureAtLeastZero;
-import static java.lang.foreign.ValueLayout.JAVA_INT;
-import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static java.util.Objects.requireNonNull;
 
 import dev.luxor.server.wal.WALCursor;
@@ -11,6 +9,7 @@ import dev.luxor.server.wal.WALFrame;
 import dev.luxor.server.wal.WALIndexHeader;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
 import java.util.Objects;
 
 /**
@@ -18,6 +17,7 @@ import java.util.Objects;
  *
  * @author houthacker
  */
+@SuppressWarnings("PMD.TooManyMethods")
 public final class OffHeapWALIndexHeader implements WALIndexHeader {
 
   /** The name of the 'last_valid_frame' field in a wal_index_header struct. */
@@ -41,12 +41,12 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
   /** The layout of a wal_index_header struct in off-heap memory. */
   public static final MemoryLayout LAYOUT =
       MemoryLayout.structLayout(
-              JAVA_INT.withName(LAST_COMMIT_FRAME_NAME),
-              JAVA_INT.withName(WAL_CURSOR_NAME),
-              JAVA_INT.withName(RANDOM_SALT_NAME),
-              JAVA_INT.withName(SEQ_SALT_NAME),
-              JAVA_LONG.withName(DB_SIZE_NAME),
-              JAVA_LONG.withName(CHECKSUM_NAME))
+              ValueLayout.JAVA_INT.withName(LAST_COMMIT_FRAME_NAME),
+              ValueLayout.JAVA_INT.withName(WAL_CURSOR_NAME),
+              ValueLayout.JAVA_INT.withName(RANDOM_SALT_NAME),
+              ValueLayout.JAVA_INT.withName(SEQ_SALT_NAME),
+              ValueLayout.JAVA_LONG.withName(DB_SIZE_NAME),
+              ValueLayout.JAVA_LONG.withName(CHECKSUM_NAME))
           .withName("wal_index_header");
 
   static {
@@ -79,6 +79,9 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
   private static final long CHECKSUM_OFFSET =
       LAYOUT.byteOffset(MemoryLayout.PathElement.groupElement(CHECKSUM_NAME));
 
+  /** The memory segment to sync back to. */
+  private final MemorySegment memory;
+
   /** The last valid commit frame within the WAL. */
   private int lastCommitFrame;
 
@@ -108,12 +111,13 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
   private OffHeapWALIndexHeader(final MemorySegment segment) {
     this.lastCommitFrame =
         requireNonNull(segment, "segment must be non-null.")
-            .get(JAVA_INT, LAST_COMMIT_FRAME_OFFSET);
-    this.cursor = new WALCursor(segment.get(JAVA_INT, WAL_CURSOR_OFFSET));
-    this.randomSalt = segment.get(JAVA_INT, RANDOM_SALT_OFFSET);
-    this.sequentialSalt = segment.get(JAVA_INT, SEQ_SALT_OFFSET);
-    this.dbSize = segment.get(JAVA_LONG, DB_SIZE_OFFSET);
-    this.cumulativeChecksum = segment.get(JAVA_LONG, CHECKSUM_OFFSET);
+            .get(ValueLayout.JAVA_INT, LAST_COMMIT_FRAME_OFFSET);
+    this.cursor = new WALCursor(segment.get(ValueLayout.JAVA_INT, WAL_CURSOR_OFFSET));
+    this.randomSalt = segment.get(ValueLayout.JAVA_INT, RANDOM_SALT_OFFSET);
+    this.sequentialSalt = segment.get(ValueLayout.JAVA_INT, SEQ_SALT_OFFSET);
+    this.dbSize = segment.get(ValueLayout.JAVA_LONG, DB_SIZE_OFFSET);
+    this.cumulativeChecksum = segment.get(ValueLayout.JAVA_LONG, CHECKSUM_OFFSET);
+    this.memory = segment;
   }
 
   /**
@@ -186,6 +190,17 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
 
   /** {@inheritDoc} */
   @Override
+  public void sync() {
+    this.memory.set(ValueLayout.JAVA_INT, LAST_COMMIT_FRAME_OFFSET, this.lastCommitFrame);
+    this.memory.set(ValueLayout.JAVA_INT, WAL_CURSOR_OFFSET, this.cursor.position());
+    this.memory.set(ValueLayout.JAVA_INT, RANDOM_SALT_OFFSET, this.randomSalt);
+    this.memory.set(ValueLayout.JAVA_INT, SEQ_SALT_OFFSET, this.sequentialSalt);
+    this.memory.set(ValueLayout.JAVA_LONG, DB_SIZE_OFFSET, this.dbSize);
+    this.memory.set(ValueLayout.JAVA_LONG, CHECKSUM_OFFSET, this.cumulativeChecksum);
+  }
+
+  /** {@inheritDoc} */
+  @Override
   public boolean equals(final Object o) {
     if (this == o) {
       return true;
@@ -219,7 +234,7 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
     private final MemorySegment memory;
 
     private Builder(final MemorySegment memory) {
-      if (!isCompatibleWith(memory, OffHeapWALIndexHeader.LAYOUT)) {
+      if (!isCompatibleWith(memory, LAYOUT)) {
         throw new IllegalArgumentException(
             "MemorySegment is not compatible with OffHeapWALIndexHeader.LAYOUT");
       }
@@ -234,7 +249,7 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
      * @return This {@link Builder} instance.
      */
     public Builder lastCommitFrame(final int lastCommitFrame) {
-      this.memory.set(JAVA_INT, LAST_COMMIT_FRAME_OFFSET, lastCommitFrame);
+      this.memory.set(ValueLayout.JAVA_INT, LAST_COMMIT_FRAME_OFFSET, lastCommitFrame);
 
       return this;
     }
@@ -246,7 +261,7 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
      * @return This {@link Builder} instance.
      */
     public Builder cursor(final int cursor) {
-      this.memory.set(JAVA_INT, WAL_CURSOR_OFFSET, cursor);
+      this.memory.set(ValueLayout.JAVA_INT, WAL_CURSOR_OFFSET, cursor);
 
       return this;
     }
@@ -259,7 +274,7 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
      * @return This {@link Builder} instance.
      */
     public Builder randomSalt(final int randomSalt) {
-      this.memory.set(JAVA_INT, RANDOM_SALT_OFFSET, randomSalt);
+      this.memory.set(ValueLayout.JAVA_INT, RANDOM_SALT_OFFSET, randomSalt);
 
       return this;
     }
@@ -272,7 +287,7 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
      * @return This {@link Builder} instance.
      */
     public Builder sequentialSalt(final int sequentialSalt) {
-      this.memory.set(JAVA_INT, SEQ_SALT_OFFSET, sequentialSalt);
+      this.memory.set(ValueLayout.JAVA_INT, SEQ_SALT_OFFSET, sequentialSalt);
 
       return this;
     }
@@ -285,7 +300,7 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
      * @return This {@link Builder} instance.
      */
     public Builder cumulativeChecksum(final long cumulativeChecksum) {
-      this.memory.set(JAVA_LONG, CHECKSUM_OFFSET, cumulativeChecksum);
+      this.memory.set(ValueLayout.JAVA_LONG, CHECKSUM_OFFSET, cumulativeChecksum);
 
       return this;
     }
@@ -298,7 +313,7 @@ public final class OffHeapWALIndexHeader implements WALIndexHeader {
      * @return This {@link Builder} instance.
      */
     public Builder dbSize(final long dbSize) {
-      this.memory.set(JAVA_LONG, DB_SIZE_OFFSET, dbSize);
+      this.memory.set(ValueLayout.JAVA_LONG, DB_SIZE_OFFSET, dbSize);
 
       return this;
     }

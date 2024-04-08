@@ -222,7 +222,7 @@ public final class OffHeapWALIndex implements WALIndex {
         requireNonNull(shm, "Cannot build OffHeapWALIndex: backing file must be non-null.")
             .mapShared(0L, LAYOUT.byteSize());
 
-    final OffHeapWALIndex walIndex = new OffHeapWALIndex(wal, memory, loadHeaders(memory));
+    final OffHeapWALIndex walIndex = new OffHeapWALIndex(shm, memory, loadHeaders(memory));
     final OffHeapWALIndexHeader indexHeader = walIndex.header();
 
     // If the memory-mapped index header is empty, this means that the wal file was not mapped
@@ -235,7 +235,7 @@ public final class OffHeapWALIndex implements WALIndex {
       }
 
       try {
-        final LocalWALHeader walHeader = LocalWALHeader.readFromFile(wal);
+        final LocalWALHeader walHeader = LocalWALHeader.readFromFile(wal, LocalWAL.HEADER_OFFSET);
         final LocalWALSpliterator spliterator = new LocalWALSpliterator(indexHeader, wal);
         StreamSupport.stream(spliterator, false)
             .filter(
@@ -491,15 +491,27 @@ public final class OffHeapWALIndex implements WALIndex {
 
   /** {@inheritDoc} */
   @Override
-  public int findFrameIndexOf(final long page) {
-    return this.table.keyOf(page);
+  public int findFrameIndexOf(final long pageIndex) {
+    return this.table.keyOf(pageIndex);
   }
 
   /** {@inheritDoc} */
   @Override
   public void notifyAppended(final WALFrame frame, final int frameIndex) {
-    this.header().notifyAppended(frame, frameIndex);
+    this.headers[0].notifyAppended(frame, frameIndex);
+    this.headers[1].notifyAppended(frame, frameIndex);
     this.table.put(frameIndex, frame.pageIndex());
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public void sync() {
+    if (this.currentLock() != WALLockType.EXCLUSIVE) {
+      log.warn("Synchronizing WAL index without exclusive lock.");
+    }
+
+    this.headers[0].sync();
+    this.headers[1].sync();
   }
 
   /** {@inheritDoc} */
@@ -573,7 +585,7 @@ public final class OffHeapWALIndex implements WALIndex {
   public void reload() {
     final OffHeapWALIndexHeader[] newHeaders = loadHeaders(this.memory);
 
-    if (newHeaders[0].equals(newHeaders[2])) {
+    if (newHeaders[0].equals(newHeaders[1])) {
       this.headers[0] = newHeaders[0];
       this.headers[1] = newHeaders[1];
       this.table.reload();

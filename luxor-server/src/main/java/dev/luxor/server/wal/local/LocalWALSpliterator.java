@@ -81,8 +81,8 @@ public final class LocalWALSpliterator implements WALSpliterator {
    */
   private static int calculateFrameCount(
       final long walFileSize, final OffHeapWALIndexHeader indexHeader) {
-    int frameCount = indexHeader.lastCommitFrame();
-    if (indexHeader.lastCommitFrame() == 0) {
+    int frameCount = indexHeader.lastCommitFrame() + 1; // default == -1
+    if (frameCount == 0) {
       // WAL size is unknown or empty, try and calculate from wal file size.
       final int base = (int) walFileSize - LocalWALHeader.BYTES;
       final int remainder = base % WALFrame.BYTES;

@@ -281,6 +281,8 @@ public final class WALFrame {
         this.randomSalt(header.getInt());
         this.sequentialSalt(header.getInt());
         this.checksum(header.getLong());
+
+        return this;
       }
 
       throw new IllegalArgumentException(

@@ -1,5 +1,8 @@
 package dev.luxor.server.io;
 
+import static dev.luxor.server.shared.Ensure.ensureAtLeastOne;
+import static dev.luxor.server.shared.Ensure.ensureAtLeastZero;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.lang.foreign.Arena;
@@ -176,11 +179,9 @@ public final class LuxorFile implements Closeable {
    * @throws IOException If an I/O error occurs.
    */
   public MemorySegment mapShared(final long offset, final long size) throws IOException {
-    if (offset < 0) {
-      throw new IllegalArgumentException("offset must be >= 0");
-    } else if (size <= 0) {
-      throw new IllegalArgumentException("size must be > 0");
-    } else if (offset + size < 0) {
+    ensureAtLeastZero(offset);
+    ensureAtLeastOne(size);
+    if (offset + size < 0) {
       throw new IllegalArgumentException("offset + size overflows Long.MAX_VALUE");
     }
 

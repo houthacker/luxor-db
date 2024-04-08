@@ -76,20 +76,33 @@ public final class LocalWALHeader implements WALHeader {
   }
 
   /**
+   * Creates a new {@link Builder} based on the given original.
+   *
+   * @param original The base WAL header.
+   * @return The new {@link Builder} instance.
+   */
+  public static Builder newBuilder(final LocalWALHeader original) {
+    return new Builder(original);
+  }
+
+  /**
    * Creates a new {@link LocalWALHeader} by reading it from the provided {@code wal}.
    *
    * @param wal The file containing the serialized {@link LocalWAL}.
    * @return The {@link LocalWALHeader}
+   * @throws NullPointerException If {@code wal} is {@code null}.
+   * @throws IllegalArgumentException If {@code offset} is negative.
    * @throws IOException If an I/O error occurs while reading the {@link LocalWALHeader}.
    * @throws CorruptWALException If the {@link LocalWALHeader} cannot be read completely, or if its
    *     checksum is incorrect.
    */
-  public static LocalWALHeader readFromFile(final LuxorFile wal)
+  public static LocalWALHeader readFromFile(final LuxorFile wal, final long offset)
       throws IOException, CorruptWALException {
     requireNonNull(wal, "wal must be non-null.");
+    ensureAtLeastZero(offset);
 
     final ByteBuffer data = ByteBuffer.allocate(BYTES);
-    final int bytesRead = wal.read(data, 0L);
+    final int bytesRead = wal.read(data, offset);
     if (bytesRead == BYTES) {
       data.rewind();
 
@@ -196,6 +209,15 @@ public final class LocalWALHeader implements WALHeader {
     /** Creates a new {@link Builder} instance. */
     private Builder() {
       /* Only instantiate from containing class. */
+    }
+
+    private Builder(final LocalWALHeader original) {
+      this.magic = requireNonNull(original, "original must be non-null.").magic;
+      this.dbSize = original.dbSize;
+      this.checkpointSequence = original.checkpointSequence;
+      this.randomSalt = original.randomSalt;
+      this.sequentialSalt = original.sequentialSalt;
+      this.checksum = original.checksum;
     }
 
     /**
