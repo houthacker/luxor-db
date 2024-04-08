@@ -104,6 +104,15 @@ public interface WriteAheadLog extends Closeable {
   WALHeader header() throws IOException, CorruptWALException;
 
   /**
+   * Creates a new spliterator to (spl)iterate over this WAL.
+   *
+   * @return A new {@link WALSpliterator} for this {@link WriteAheadLog}.
+   * @throws IOException If an I/O error occurs while reading the WAL.
+   * @throws CorruptWALException If the WAL is corrupted.
+   */
+  WALSpliterator spliterator() throws CorruptWALException, IOException;
+
+  /**
    * Begins a new read transaction. If the calling thread already is in a transaction (read or
    * write) at the time this method is called, this method has no additional effect and therefore
    * uses the same database snapshot as the other running transaction(s) created by the calling
@@ -124,13 +133,13 @@ public interface WriteAheadLog extends Closeable {
   void endReadTransaction();
 
   /**
-   * Returns the frame number in which {@code pageNumber} is stored, or {@code -1} if no such frame
+   * Returns the frame number in which {@code pageIndex} is stored, or {@code -1} if no such frame
    * exists.
    *
-   * @param pageNumber The page number to search for.
+   * @param pageIndex The page number to search for.
    * @return The frame index.
    */
-  int frameIndexOf(long pageNumber);
+  int frameIndexOf(long pageIndex);
 
   /**
    * Reads the page at {@code frameIndex}.

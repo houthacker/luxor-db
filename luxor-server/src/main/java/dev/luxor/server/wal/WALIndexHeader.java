@@ -82,4 +82,7 @@ public interface WALIndexHeader {
    * @param frameIndex The index the frame was written at.
    */
   void notifyAppended(WALFrame frame, int frameIndex);
+
+  /** Synchronizes the contents of this {@link WALIndexHeader} with its backing storage. */
+  void sync();
 }

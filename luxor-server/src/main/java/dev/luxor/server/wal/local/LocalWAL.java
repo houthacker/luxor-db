@@ -16,6 +16,7 @@ import dev.luxor.server.wal.TransientWALWriteException;
 import dev.luxor.server.wal.WALFrame;
 import dev.luxor.server.wal.WALHeader;
 import dev.luxor.server.wal.WALLockType;
+import dev.luxor.server.wal.WALSpliterator;
 import dev.luxor.server.wal.WALWriteException;
 import dev.luxor.server.wal.WriteAheadLog;
 import java.io.IOException;
@@ -43,6 +44,9 @@ import org.slf4j.LoggerFactory;
 public final class LocalWAL implements WriteAheadLog {
 
   private static final Logger log = LoggerFactory.getLogger(LocalWAL.class);
+
+  /** The offset (in bytes) of the {@link LocalWALHeader} within the WAL file. */
+  public static final long HEADER_OFFSET = 0L;
 
   /** The global lock that must be used when creating a new WAL file. */
   private static final ReentrantLock INIT_LOCK = new ReentrantLock();
@@ -259,7 +263,13 @@ public final class LocalWAL implements WriteAheadLog {
   /** {@inheritDoc} */
   @Override
   public LocalWALHeader header() throws IOException, CorruptWALException {
-    return LocalWALHeader.readFromFile(this.file);
+    return LocalWALHeader.readFromFile(this.file, HEADER_OFFSET);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public WALSpliterator spliterator() throws CorruptWALException, IOException {
+    return new LocalWALSpliterator(this.index.header(), this.file);
   }
 
   /** {@inheritDoc} */
@@ -280,19 +290,18 @@ public final class LocalWAL implements WriteAheadLog {
 
   /** {@inheritDoc} */
   @Override
-  public int frameIndexOf(final long pageNumber) {
-    return this.index.findFrameIndexOf(pageNumber);
+  public int frameIndexOf(final long pageIndex) {
+    return this.index.findFrameIndexOf(pageIndex);
   }
 
   /** {@inheritDoc} */
   @Override
   public ByteBuffer pageAt(final int frameIndex) throws IOException, NoSuchPageException {
+    ensureAtLeastZero(frameIndex);
     final WALLockType lockType = this.index.currentLock();
-    if (lockType.mask() < WALLockType.SHARED.mask()) {
+    if (lockType.mask() < WALLockType.SHARED.mask() && log.isWarnEnabled()) {
       log.warn("Reading WAL frame with unexpected lock type {}.", lockType.name());
     }
-
-    ensureAtLeastZero(frameIndex);
 
     // Check if the given frame is within the file bounds from the point of view of the calling
     // thread.
@@ -304,7 +313,7 @@ public final class LocalWAL implements WriteAheadLog {
       final ByteBuffer buf = ByteBuffer.allocate(Page.BYTES);
       final int bytesRead = this.file.read(buf, offset);
       if (bytesRead == Page.BYTES) {
-        return buf;
+        return buf.rewind();
       }
 
       throw new CorruptPageException(
@@ -341,7 +350,7 @@ public final class LocalWAL implements WriteAheadLog {
   @SuppressWarnings("PMD.CyclomaticComplexity")
   public void writePage(final Page page, final boolean commit) throws TransientWALWriteException {
     final WALLockType lockType = this.index.currentLock();
-    if (lockType != WALLockType.EXCLUSIVE) {
+    if (lockType != WALLockType.EXCLUSIVE && log.isWarnEnabled()) {
       log.warn("Writing WAL frame with unexpected lock type {}.", lockType.name());
     }
 
@@ -356,14 +365,8 @@ public final class LocalWAL implements WriteAheadLog {
               .commit(commit)
               .randomSalt(header.randomSalt())
               .sequentialSalt(header.sequentialSalt())
-              .checksum(
-                  new FNV1a(header.cumulativeChecksum())
-                      .iterate(page.index())
-                      .iterate(commit)
-                      .iterate(header.randomSalt())
-                      .iterate(header.sequentialSalt())
-                      .iterate(pageData, 0, Page.BYTES)
-                      .state())
+              .page(pageData)
+              .calculateChecksum(new FNV1a(header.cumulativeChecksum()))
               .build();
 
       // Calculate the offset at which the frame must be written.
@@ -382,6 +385,17 @@ public final class LocalWAL implements WriteAheadLog {
 
       // Ensure durability by flushing the file contents to its storage device after every commit.
       if (frame.isCommit()) {
+        final LocalWALHeader walHeader = this.header();
+
+        this.file.write(
+            LocalWALHeader.newBuilder(walHeader)
+                .dbSize(this.index.header().dbSize())
+                .calculateChecksum()
+                .build()
+                .asByteBuffer(),
+            HEADER_OFFSET);
+
+        this.index.sync();
         this.file.sync();
       }
 
@@ -402,6 +416,8 @@ public final class LocalWAL implements WriteAheadLog {
       throw new WALWriteException("WAL closed.", e);
     } catch (IOException e) {
       throw new TransientWALWriteException("Could not write to the WAL.", e);
+    } catch (CorruptWALException e) {
+      throw new WALWriteException("WAL is corrupted, therefore not appending page.", e);
     }
   }
 

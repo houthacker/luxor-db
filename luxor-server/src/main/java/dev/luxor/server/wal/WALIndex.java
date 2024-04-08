@@ -55,6 +55,9 @@ public interface WALIndex extends Closeable {
    */
   void notifyAppended(WALFrame frame, int frameIndex);
 
+  /** Synchronizes this {@link WALIndex} with its backing storage. */
+  void sync();
+
   /**
    * Returns the most restrictive lock currently held by this {@link WALIndex}.
    *

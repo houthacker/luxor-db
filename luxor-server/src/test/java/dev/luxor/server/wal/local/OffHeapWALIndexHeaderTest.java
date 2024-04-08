@@ -1,8 +1,7 @@
-package dev.luxor.server.wal;
+package dev.luxor.server.wal.local;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import dev.luxor.server.wal.local.OffHeapWALIndexHeader;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import org.junit.jupiter.api.Test;

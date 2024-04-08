@@ -1,17 +1,18 @@
-package dev.luxor.server.wal;
+package dev.luxor.server.wal.local;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 import dev.luxor.server.algo.FNV1a;
 import dev.luxor.server.io.LuxorFile;
 import dev.luxor.server.io.Page;
-import dev.luxor.server.wal.local.OffHeapWALIndex;
-import dev.luxor.server.wal.local.OffHeapWALIndexHeader;
+import dev.luxor.server.wal.WALFrame;
+import dev.luxor.server.wal.WALLockType;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 class OffHeapWALIndexTest {
@@ -84,7 +85,7 @@ class OffHeapWALIndexTest {
           indexHeader.cursor(),
           "Expect the cursor of an initial OffHeapWALIndex to point to frame zero.");
       assertFalse(index.isStale(), "Expect an initial OffHeapWALIndex not to be stale.");
-      assertEquals(
+      Assertions.assertEquals(
           WALLockType.NONE,
           index.currentLock(),
           "Expect an initial OffHeapWALIndex to be unlocked.");
