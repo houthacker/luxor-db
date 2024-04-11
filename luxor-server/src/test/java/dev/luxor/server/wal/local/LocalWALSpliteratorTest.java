@@ -55,7 +55,7 @@ class LocalWALSpliteratorTest {
                 assertTrue(frame.pageIndex() > ppi.get(), "Expect ordered stream of WAL frames.");
                 final byte[] data = new byte[4];
                 frame.page().get(0, data);
-                assertEquals(
+                assertArrayEquals(
                     new byte[] {1, 3, 3, 7},
                     data,
                     "Expect a frame-iteration-test page to start with a specific byte sequence.");
