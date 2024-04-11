@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import dev.luxor.server.concurrent.OutOfOrderLockException;
 import dev.luxor.server.io.CorruptPageException;
 import dev.luxor.server.io.NoSuchPageException;
-import dev.luxor.server.io.Page;
+import dev.luxor.server.pager.Page;
 import dev.luxor.server.wal.WALFrame;
 import dev.luxor.server.wal.WALHeader;
 import dev.luxor.server.wal.WriteAheadLog;

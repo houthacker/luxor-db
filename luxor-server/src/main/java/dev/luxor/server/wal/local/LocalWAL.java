@@ -9,7 +9,7 @@ import dev.luxor.server.concurrent.LockFailedException;
 import dev.luxor.server.io.CorruptPageException;
 import dev.luxor.server.io.LuxorFile;
 import dev.luxor.server.io.NoSuchPageException;
-import dev.luxor.server.io.Page;
+import dev.luxor.server.pager.Page;
 import dev.luxor.server.wal.CorruptWALException;
 import dev.luxor.server.wal.StaleWALException;
 import dev.luxor.server.wal.TransientWALWriteException;

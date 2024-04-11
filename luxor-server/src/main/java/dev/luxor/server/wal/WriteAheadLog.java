@@ -4,7 +4,7 @@ import dev.luxor.server.concurrent.LockFailedException;
 import dev.luxor.server.concurrent.OutOfOrderLockException;
 import dev.luxor.server.io.CorruptPageException;
 import dev.luxor.server.io.NoSuchPageException;
-import dev.luxor.server.io.Page;
+import dev.luxor.server.pager.Page;
 import dev.luxor.server.wal.local.LocalWAL;
 import java.io.Closeable;
 import java.io.IOException;

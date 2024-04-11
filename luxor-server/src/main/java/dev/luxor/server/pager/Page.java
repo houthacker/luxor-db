@@ -1,4 +1,4 @@
-package dev.luxor.server.io;
+package dev.luxor.server.pager;
 
 import static dev.luxor.server.shared.Ensure.ensureAtLeastZero;
 import static java.util.Objects.requireNonNull;

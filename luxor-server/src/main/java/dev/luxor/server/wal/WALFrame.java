@@ -4,7 +4,7 @@ import static dev.luxor.server.shared.Ensure.ensureAtLeastOne;
 import static java.util.Objects.requireNonNull;
 
 import dev.luxor.server.algo.FNV1a;
-import dev.luxor.server.io.Page;
+import dev.luxor.server.pager.Page;
 import java.nio.ByteBuffer;
 
 /**

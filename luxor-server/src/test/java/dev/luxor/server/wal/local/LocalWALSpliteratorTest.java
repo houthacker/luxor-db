@@ -3,7 +3,7 @@ package dev.luxor.server.wal.local;
 import static org.junit.jupiter.api.Assertions.*;
 
 import dev.luxor.server.io.LuxorFile;
-import dev.luxor.server.io.Page;
+import dev.luxor.server.pager.Page;
 import dev.luxor.server.wal.CorruptWALException;
 import dev.luxor.server.wal.WALFrame;
 import dev.luxor.server.wal.WALSpliterator;
