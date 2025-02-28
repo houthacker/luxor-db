@@ -1,0 +1,9 @@
+# Default behaviour for line endings
+* text=auto
+
+# Explicitly have java sources normalize their line endings
+*.java text
+*.json text
+*.xml text
+*.md text
+*.gradle text
